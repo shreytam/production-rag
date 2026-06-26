@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.local
+
+# Data & caches
+data/
+.cache/
+contextual_cache/
+*.duckdb
+qdrant_storage/
+pgdata/
+
+# Eval outputs (keep baselines/, ignore run artifacts)
+eval/runs/
+*.results.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Project agent scratch
+.remember/
+.worktrees/
+.claude/
+.agents/
+
+# Throwaway API test payload
+payload.json

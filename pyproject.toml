@@ -1,0 +1,55 @@
+[project]
+name = "production-rag"
+version = "0.1.0"
+description = "Production-grade RAG: hybrid retrieval + reranking + contextual retrieval, ACL isolation, guardrails, and an eval harness wired into CI."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "openai>=1.40",
+    "anthropic>=0.34",
+    "qdrant-client>=1.10",
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3",
+    "rank-bm25>=0.2.2",
+    "tiktoken>=0.7",
+    "numpy>=1.26",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "tenacity>=8.5",
+]
+
+[project.optional-dependencies]
+eval = ["datasets>=2.20", "scipy>=1.13", "pandas>=2.2"]
+rerank-local = ["sentence-transformers>=3.0"]
+app = ["fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37"]
+obs = ["langfuse>=4"]
+# Optional: cross-check our native RAGAS-style metrics against the real library.
+# Not part of the core/CI path (the native metrics are the spine); install with
+# `uv sync --extra ragas` to enable eval/ragas_adapter.py.
+ragas = ["ragas>=0.4", "langchain-openai>=0.2"]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6"]
+all = [
+    "datasets>=2.20", "scipy>=1.13", "pandas>=2.2",
+    "sentence-transformers>=3.0",
+    "fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37",
+    "langfuse>=4",
+    "pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "providers", "ingest", "corpora", "retrieval", "generation", "guardrails", "eval", "observability", "app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

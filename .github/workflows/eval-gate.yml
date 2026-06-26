@@ -1,0 +1,159 @@
+# CI pipeline for Production RAG
+#
+# Two jobs:
+#   lint   — offline: ruff + pytest (no secrets, no services required)
+#   eval   — online:  ingest → eval → compare against committed baseline
+#
+# REQUIRED SECRET: Set `NVIDIA_API_KEY` in repo Settings → Secrets → Actions.
+# The eval job will fail without it.  The lint job runs unconditionally.
+#
+# PREREQUISITE for the eval gate: the file eval/baselines/hotpotqa.json must
+# exist in the repo.  It is produced by running the eval workstream against
+# the agreed fixture (--limit 50) and committing the output.  Until that file
+# is committed, the compare step will always exit 1.  See docs/architecture.md
+# "Bootstrapping the baseline" for instructions.
+
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: lint + offline tests — no secrets, no services needed
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint & Offline Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Offline test suite
+        # These tests use fakes/mocks; no NVIDIA_API_KEY or running services required.
+        run: uv run pytest -q
+
+  # ---------------------------------------------------------------------------
+  # Job 2: eval gate — requires NVIDIA_API_KEY and the Qdrant service
+  # ---------------------------------------------------------------------------
+  eval:
+    name: Eval Gate (hotpotqa / full pipeline)
+    runs-on: ubuntu-latest
+
+    # Qdrant service container — CI uses VECTOR_STORE=qdrant (the default)
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+        # Qdrant has no readiness probe endpoint we can health-check cheaply;
+        # the ingest step will retry automatically via tenacity.
+        options: >-
+          --health-cmd "curl -sf http://localhost:6333/healthz || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # ── Provider: NIM via OpenAI-compatible SDK ─────────────────────────────
+      # NVIDIA_API_KEY is the only credential needed. All component keys fall
+      # back to it via core/config.py Settings._fill_key_fallbacks().
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+      # ── Vector store (keep Qdrant; avoids the Postgres service overhead) ────
+      VECTOR_STORE: qdrant
+      QDRANT_URL: http://localhost:6333
+
+      # ── Embeddings: NIM nv-embedqa-e5-v5 (1024-d) ─────────────────────────
+      # These match the defaults in core/config.py but are set explicitly so
+      # that a config-default change doesn't silently alter CI behaviour.
+      EMBED_BASE_URL: https://integrate.api.nvidia.com/v1
+      EMBED_MODEL: nvidia/nv-embedqa-e5-v5
+      EMBED_DIMENSION: "1024"
+
+      # ── Generation: NIM Llama-3.3-70b-instruct ─────────────────────────────
+      GEN_PROVIDER: openai
+      GEN_BASE_URL: https://integrate.api.nvidia.com/v1
+      GEN_MODEL: meta/llama-3.3-70b-instruct
+
+      # ── LLM judge (backs RAGAS-style metrics + holistic judge) ─────────────
+      JUDGE_PROVIDER: openai
+      JUDGE_BASE_URL: https://integrate.api.nvidia.com/v1
+      JUDGE_MODEL: meta/llama-3.3-70b-instruct
+
+      # ── Reranker: NIM (avoids downloading ~2 GB BGE weights on the runner) ─
+      # Uses the same NVIDIA_API_KEY via the fallback in config.py.
+      RERANKER: nim
+      RERANKER_NIM_MODEL: nvidia/llama-3.2-nv-rerankqa-1b-v2
+      RERANKER_NIM_BASE_URL: https://integrate.api.nvidia.com/v1
+
+      # ── Context assembly ───────────────────────────────────────────────────
+      CONTEXT_PROVIDER: openai
+      CONTEXT_BASE_URL: https://integrate.api.nvidia.com/v1
+      CONTEXT_MODEL: meta/llama-3.1-8b-instruct
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      # No NVIDIA key needed for installation.
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      # ── Ingest ──────────────────────────────────────────────────────────────
+      # REQUIRES NVIDIA_API_KEY (embedding calls to NIM).
+      # We call the module directly (not `make ingest`) to pass --limit, which
+      # the Makefile target does not support.
+      # --limit 50: keeps NIM calls well under the 40 rpm free-tier cap and
+      # ensures CI completes in ~5 min.  The committed baseline must be
+      # generated against the same --limit 50 fixture (see prerequisite above).
+      # --contextual is intentionally OMITTED: it fires one LLM call per chunk
+      # (~50 extra calls) and the full pipeline runs correctly without prefixes.
+      - name: Ingest fixture corpus (hotpotqa, limit=50)
+        run: |
+          uv run python -m ingest.run \
+            --dataset hotpotqa \
+            --limit 50
+
+      # ── Eval ────────────────────────────────────────────────────────────────
+      # REQUIRES NVIDIA_API_KEY (generation + judge calls to NIM).
+      # --fast caps at 15 items (fast_subset), which is sufficient for CI.
+      # Per-item: ~15 LLM calls (pipeline + faithfulness + answer_relevancy +
+      # context_precision×8 + context_recall + holistic_judge).
+      # Total: ~225 LLM calls + ~20 embed calls ≈ 8–12 min wall time at 40 rpm.
+      - name: Run eval (full pipeline, fast subset)
+        run: |
+          uv run python -m eval.run_eval \
+            --dataset hotpotqa \
+            --version full \
+            --fast
+
+      # ── Gate ────────────────────────────────────────────────────────────────
+      # Compares the run just produced against the committed golden baseline.
+      # Exits 1 (failing the job) if any metric drops below baseline − 0.03.
+      # DOES NOT require NVIDIA_API_KEY (pure JSON comparison).
+      - name: Compare against baseline (tolerance = 0.03)
+        run: |
+          uv run python -m eval.compare \
+            --dataset hotpotqa \
+            --new full \
+            --baseline-file eval/baselines/hotpotqa.json \
+            --tolerance 0.03
