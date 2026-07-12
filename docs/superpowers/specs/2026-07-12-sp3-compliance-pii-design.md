@@ -1,7 +1,7 @@
 # SP3 · Compliance / Data Protection — Design Spec
 
 **Date:** 2026-07-12
-**Status:** Approved (core decisions locked; optional salted value-hash added off-by-default per review) → adversarial spec-verification → writing-plans
+**Status:** Approved (adversarially verified; revised to patch contextual leaks, nested span offsets, and metadata/log leaks) → writing-plans
 **Program:** Production-hardening, Phase 0 (risk-ordered). Third slice, after SP1 (Security) and SP2 (Guardrails).
 
 ---
@@ -72,22 +72,35 @@ class PIIDetector(Protocol):
 - `build_pii_detector(settings)` in `core/registry.py` — the only place the concrete class is named.
 
 ### 5.3 Redaction + audit — `ingest/pii.py`, `ingest/audit.py`
-- `redact(text, spans) -> str` — applies `[TYPE]` placeholders right-to-left (offset-safe). Pure.
-- `PIIRedactor` (facade, keeps the name so `guardrails/pii_guard.py` is unchanged) — detect (via the configured detector) → redact → returns `(clean, findings)`; used by the input/output guards, where the action is always "redact".
+- `redact(text, spans) -> str` — offset-safe string replacements. To handle overlapping or nested spans (e.g. EMAIL containing a card pattern, or Presidio entities), `redact` MUST first sort spans by `start` descending, and filter/de-overlap them (for any overlapping spans, keep the longer pattern and discard the shorter nested/overlapping ones, skipping any span that overlaps a previously accepted span during descending processing). Placeholder replacements are applied right-to-left on the resulting disjoint, sorted spans. Pure.
+- `PIIRedactor` (facade, keeps the name so `guardrails/pii_guard.py` is unchanged) — detect (via the configured detector) → redact → returns `(clean, findings)`; used by the input/output guards, where the action is always "redact". To prevent raw PII values leaking into observability spans or CLI output, the returned `findings` list MUST contain only value-free findings (spans metadata like `{type, start, end}`) or strip the raw text `'value'` field completely from findings before returning them.
 - `ingest/audit.py` · `PIIAuditLog` — an append-only JSONL sink at `pii_audit_log_path`; `record(tenant_id, doc_id, chunk_id, text, spans)` writes one line per span with **no raw value**. Durable, queryable, not itself a PII store. When `pii_audit_value_hash` is enabled, it slices `text[span.start:span.end]` to compute `value_hash = sha256(salt + value)[:16]`, writes the hash, and **discards the slice** — the raw value is never persisted. `PIISpan` stays value-free (§5.1); the source text is passed to `record` only so the hash can be computed transiently, and is unused when hashing is off.
 
 ### 5.4 Ingest policy step — `ingest/run.py`
-After chunking, before contextual prefixing/embedding, a `_apply_pii_policy(chunks, mode, detector, audit)` step:
-- **`redact` mode:** replace each `chunk.text` with the redacted text; audit each finding.
-- **`keep` mode:** leave `chunk.text` intact; set `chunk.metadata["pii_types"] = sorted({span.type ...})`; audit each finding.
-- Both modes: **detection always runs.** Fail-closed on detector error (raise, don't store); in `keep` mode, an audit-write failure also aborts.
+To prevent PII leaking into the contextual prefix LLM, the embeddings, the stores, or the on-disk cache:
+- The policy step runs **early** in `ingest/run.py` (after parser/loader, before chunking/prefixing).
+- **In `redact` mode:**
+  1. Detect and redact PII in raw documents (`docs`) first. The resulting document texts are used to build `doc_by_id` and feed the contextual-prefix LLM, preventing raw PII from reaching the LLM or being written to the contextual disk cache (`.cache/contextual/`).
+  2. Perform chunking on the redacted documents; `chunk.text` thus inherits the redacted text.
+  3. The prefixer generates prefixes from the clean document text. As a defense-in-depth step, we scan and redact the generated `chunk.contextual_prefix` as well (in case the LLM hallucinates/re-injects PII) before stitching it into `embed_text`.
+  4. Write audit records for the document-level redacted spans.
+  5. The embeddings, vector store, and BM25 store receive only redacted text.
+- **In `keep` mode:**
+  1. Chunking runs on unredacted documents.
+  2. Detection runs on chunks. We tag `chunk.metadata["pii_types"]` and write the audit record.
+  3. The contextual prefix LLM runs on unredacted document chunks and records unredacted prefixes, which are validly cached to disk since the operator explicitly opted to keep PII.
+- Both modes: Fail-closed on detector error (raise, don't store); in `keep` mode, an audit-write failure also aborts.
+- Configuration: When `--pii-mode redact` is specified, the contextual cache directory `.cache/contextual/` contains exclusively redacted text. If switching ingest modes on the same machine, the operator should clear the cache, or the code must separate cache namespaces by `pii_mode`. We append `-redact` or `-keep` to the contextual cache subdirectories/filenames based on the active policy to isolate them.
 
 ### 5.5 Observability PII protection — `observability/langfuse_tracing.py` + `core/pipeline.py`
 - The `Langfuse(...)` constructor gains a `mask=` callback (runs `PIIRedactor` over any traced string; fail-closed → placeholder on mask error) and `sample_rate=settings.langfuse_sample_rate`.
 - `pipeline.answer()` stops passing the raw `question` to the root span before the input guard runs (trace the redacted form, or omit until after `apply_redactions`).
 
 ### 5.6 Output-side scan — `guardrails/runner.py`
-`default_runner` appends `PIIGuardrail()` to `output_guards` when `pii_scan_output` — any PII in the answer is REDACTED before return via the existing REDACT path (unaffected by SP2's BLOCK suppression).
+`default_runner` appends `PIIGuardrail()` to `output_guards` when `pii_scan_output` — any PII in the answer is REDACTED before return via the REDACT path (unaffected by SP2's BLOCK suppression).
+To prevent object-level leaks inside the response:
+- When the `PIIGuardrail` or pipeline performs output redactions, it MUST check if the answer contains `answer.metadata["structured_output"]["answer"]` (the verbatim copy from the generator). If present and redactions were made, the metadata copy MUST also be passed through the redactor or removed completely from the metadata object, ensuring no raw PII remains at rest inside `Answer` metadata.
+- The `PIIGuardrail` results returned by `check(text)` and logged in `Answer.metadata["guardrails"]` (which are written back in the pipeline run results) must strip the raw `'value'` field from their findings list, leaving only value-free metadata (`{type, start, end}`). This ensures that even the guard logs in the response object contain zero cleartext PII.
 
 ---
 
@@ -95,14 +108,20 @@ After chunking, before contextual prefixing/embedding, a `_apply_pii_policy(chun
 
 ```
 INGEST (pii_mode):
-  load → chunk → detect(chunk.text)
-       ├ redact: chunk.text := redact(...)            → audit(type/loc, no value)
-       └ keep:   chunk.metadata["pii_types"] := [...]  → audit(type/loc, no value)
-       → contextual prefix (LLM) → embed → vector store + BM25   (redacted in `redact` mode)
+  redact path: load → detect(doc) → redact(doc) → chunk(redacted doc)
+              → contextual prefix (LLM with redacted doc) → generate prefix → redact(prefix)
+              → embed → vector store + BM25 (exclusively clean text; cache isolates namespaces)
+              → audit(type/loc, no value)
+  keep path:   load → chunk(raw doc) → detect(chunk.text)
+              → tag metadata["pii_types"]
+              → contextual prefix (LLM with raw doc)
+              → embed → vector store + BM25 (raw text with tags)
+              → audit(type/loc, no value; abort-on-failure)
 
 QUERY:
-  question → input guards (injection / PII REDACT) → retrieval → generation
-           → output guards (+ PII REDACT if pii_scan_output) → response
+  question   → input guards (injection / PII REDACT) → retrieval → generation
+             → output guards (+ PII REDACT if pii_scan_output) → response
+             (output guard cleans both ans.text & structured_output["answer"] metadata, and strips raw value from guard log findings)
   Langfuse: mask() redacts every traced string; question traced only after redaction; sample_rate applied
 ```
 
@@ -131,19 +150,21 @@ QUERY:
 ## 9. Testing (TDD)
 
 Offline (fakes, no network):
-- **Ingest redact:** a doc with email/SSN → the stored `chunk.text`, `embed_text`, the upserted vector-store payload, and the BM25 pickle contain `[EMAIL]`/`[SSN]` placeholders and **zero** raw PII.
+- **Ingest redact:** a doc with email/SSN → the stored `chunk.text`, `embed_text`, the upserted vector-store payload, and the BM25 pickle contain `[EMAIL]`/`[SSN]` placeholders and **zero** raw PII. This MUST be validated both for normal ingest AND when `--contextual` runs: the raw doc mapping `doc_by_id` must be redacted first, and the generated prefix must be re-scanned.
+- **Contextual cache isolation:** running in redact mode caches prefixes under a redacted cache namespace (`.cache/contextual/*-redact`), while keep mode uses a keep namespace (`.cache/contextual/*-keep`).
 - **Ingest keep:** same doc → `chunk.text` retains the PII, `chunk.metadata["pii_types"]` lists the types, and an audit record is written.
 - **Detector Protocol:** `RegexPIIDetector.detect` returns `PIISpan`s (no value field); `redact` applies placeholders; `PresidioPIIDetector` test skipped when the extra isn't installed.
+- **Overlap & nesting handling:** calling `redact()` with unsorted or overlapping spans (e.g. EMAIL containing card pattern, or nested spans) successfully collapses overlaps (keeping the longer span) and replaces characters without offset corruption or raw characters surviving.
 - **Audit log:** JSONL is durable (survives a new `PIIAuditLog` instance), keyed by ids, and contains **no raw value**.
 - **Audit value hash:** with `pii_audit_value_hash=True` and a salt, two docs containing the same email produce **identical** `value_hash` values and a **different** hash from a third email; the raw value never appears in the JSONL; with hashing off, no `value_hash` field is written. Boot validation rejects hash-enabled-without-salt.
 - **Langfuse mask:** the mask callback redacts PII in a traced string; the root span never receives the raw question.
-- **Output scan:** an answer containing an email → `[EMAIL]` before return.
+- **Output scan & metadata scrubbing:** an answer containing an email → `[EMAIL]` in returned `ans.text`. Additionally, `ans.metadata["structured_output"]["answer"]` is either redacted/scrubbed or popped. And `ans.metadata["guardrails"]` has no raw PII in its logs — the check results strip `'value'` fields from their findings.
 - **Fail-closed:** a detector that raises at ingest → the chunk is not stored (exception propagates); `keep`-mode audit failure aborts.
 
 ## 10. Files
 
 **Create:** `providers/pii/__init__.py`, `providers/pii/regex_detector.py`, `providers/pii/presidio_detector.py`, `ingest/audit.py`, `tests/test_pii_compliance.py`.
-**Modify:** `core/types.py` (`PIISpan`), `core/interfaces.py` (`PIIDetector`), `core/config.py` (knobs), `core/registry.py` (`build_pii_detector`), `ingest/pii.py` (refactor to detector + `redact(text, spans)`, keep `PIIRedactor` facade), `ingest/run.py` (policy step + `--pii-mode`), `observability/langfuse_tracing.py` (mask + sample_rate), `core/pipeline.py` (trace after redaction), `guardrails/runner.py` (output PII guard), `pyproject.toml` (`pii-ner` extra), `.gitignore` (`.audit/`).
+**Modify:** `core/types.py` (`PIISpan`), `core/interfaces.py` (`PIIDetector`), `core/config.py` (knobs), `core/registry.py` (`build_pii_detector`), `ingest/pii.py` (refactor to detector + `redact(text, spans)`, keep `PIIRedactor` facade, strip `value` from results), `ingest/run.py` (document-level policy step + `--pii-mode`), `ingest/contextual.py` (cache namespace isolation + prefix rescanning), `observability/langfuse_tracing.py` (mask + sample_rate), `core/pipeline.py` (trace after redaction + metadata/answer scrubbing), `guardrails/runner.py` (output PII guard), `pyproject.toml` (`pii-ner` extra), `.gitignore` (`.audit/`).
 
 ## 11. Open questions / future hooks
 
