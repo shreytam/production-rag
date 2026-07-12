@@ -133,7 +133,7 @@ There is **no client-controlled identity path** remaining.
 - `QueryRequest`: drop `tenant_id` and `acl_tags`; keep `question` (with `max_length = max_question_chars`).
 - `/query`: `Authorization` header **required**; remove the `x_tenant_id` header param and the body-identity handling.
 - Remove/ignore the `X-Tenant-Id` header entirely (no silent honoring).
-- Error responses are sanitized JSON (`{ "detail": "...", "request_id": "..." }`), no stack traces: `401` (unauthenticated), `403` (authenticated but no valid tenant, or an over-scoped/malformed token), `422` (user-input caps, e.g. oversized `question`). `401` includes `WWW-Authenticate: Bearer`.
+- Error responses are sanitized JSON — FastAPI's default `{ "detail": "..." }` shape, never a stack trace: `401` (unauthenticated), `403` (authenticated but no valid tenant, or an over-scoped/malformed token), `422` (user-input caps, e.g. oversized `question`). `401` includes `WWW-Authenticate: Bearer`. (A correlation `request_id` in error bodies + a catch-all 500 sanitizer arrive with SP9's global exception handler — deferred here to keep the slice focused, consistent with §3.)
 
 ---
 
