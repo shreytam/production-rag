@@ -1,7 +1,7 @@
 # SP11 · Scale Narrative (VDB-Decision) — Design Spec
 
-**Date:** 2026-07-12
-**Status:** DRAFT — pending user review (design decisions are PROPOSED, not yet approved)
+**Date:** 2026-07-13
+**Status:** APPROVED
 **Program:** Production-hardening, Phase 2 (design artifact — narrative + README section + one decision, **minimal/no code**). This spec **is** the "VDB-Decision" referenced by SP1 (`docs/superpowers/specs/2026-07-12-sp1-security-tenancy-design.md:34,200`) and SP5 (`…sp5-eval-gate-design.md:46`): both defer *physical* namespace-per-org isolation to "VDB-Decision / SP11." It therefore **owns** the physical-isolation decision and **blocks** SP8 (ingest implementation). It touches no security/guardrail/cost/eval behavior — those slices stay authoritative.
 
 ---
