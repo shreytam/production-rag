@@ -317,18 +317,21 @@ The self-hosted Langfuse instance is started with `make up` (port 3000).
 
 ## What I'd Do at 100× Scale
 
-| Area | Current | At 100× |
-|---|---|---|
-| Ingestion throughput | Sequential embed + upsert | Async batch pipeline (Celery / Ray), streaming embed |
-| Embedding cache | Per-chunk contextual cache on disk | Distributed cache (Redis) keyed on content hash |
-| Vector index | Single Qdrant collection | Sharded Qdrant cluster or managed Pinecone/Weaviate |
-| BM25 | In-process rank-bm25 pickled | Elasticsearch / OpenSearch with BM25F |
-| Reranker | Single cross-encoder | Batched GPU inference; NIM for throughput |
-| ACL | Pre-filter in vector search | Combined dense filter + dedicated auth service |
-| Rate limits | Sequential calls at 40 rpm | Request queue + exponential backoff + token-bucket |
-| Eval | 15-item fast subset in CI | Nightly full-corpus eval on dedicated runner |
-| Observability | Self-hosted Langfuse | Managed Langfuse cloud or OpenTelemetry → Grafana |
-| Multi-tenancy | tenant_id field in chunks | Separate namespaces / collections per tenant |
+To scale the RAG pipeline to 100× data volume and traffic, we leverage five operational lessons from Notion's search infrastructure engineering. Because the system is structured around decorator/factory registries and `typing.Protocol` interfaces, scaling is accomplished by writing new backends (providers) and swapping them via environment variables, avoiding edits to the query pipeline (`core/pipeline.py`).
+
+| Operation | Current Limitation | 100× Scaling Architecture | Interface & Seam |
+|---|---|---|---|
+| **Multi-Tenancy Isolation** | Logical boundaries (`acl.py`); all tenant vectors share one collection separated by query filters. | **Physical namespace/collection-per-tenant isolation**. Prevents cross-tenant vector scanning, containerizes data, and containment of leak blast-radius. | `VectorStore` Protocol (`core/interfaces.py`). Switched configuration: `tenant_isolation` (`pooled` vs `physical`). |
+| **Vector Store Hosting** | Always-on, pay-per-uptime VM instances. | **Serverless Vector DB** backing storage to object storage (e.g. Turbopuffer). Yields ~60% cost reduction by billing for active use instead of idle compute. | `VectorStore` Protocol (`core/interfaces.py`). Registry branch: `providers/vectorstores/turbopuffer_store.py`. |
+| **Ingestion Pipeline** | Sequential, synchronous indexing; no streaming or sub-minute data freshness. | **Decoupled execution lanes**: Parallel Spark/Ray batch backfills + Kafka CDC streaming lane for low-latency ingest, yielding sub-minute data freshness. | `SparseRetriever` / `VectorStore` write APIs (`ingest/run.py` CLI refactor). |
+| **Embedding Generation** | Paid, rate-limited public APIs; high token costs and latency overhead. | **Self-hosted embedding models** (e.g. Triton Inference Server / vLLM running on local GPU instances). Yields ~90% cost reduction and removes call limits. | `Embedder` Protocol (`core/interfaces.py`). Registry branch: `providers/embedders/selfhosted.py`. |
+| **Capacity Scaling** | In-place collection re-sharding and online schema/collection migrations. | **Generation-based routing** (Monotonic routing by `corpus_version` / `generation`). Point raw writes to a new collection/version index and retire old indices when depleted, avoiding online re-shards. | `VectorStore` / `RAGPipeline` boundaries (`ensure_collection(dimension, version)`). |
+
+Other operational dimensions scale similarly:
+- **BM25 retrieval** migrates from in-process pickled `rank-bm25` indexes to a distributed Elasticsearch/OpenSearch cluster using BM25F with tenant-routing.
+- **Reranking** runs batched GPU inference via NVIDIA NIM containers to maximize throughput.
+- **Rate limiting** is handled by a distributed Redis token-bucket middleware in the API boundary instead of single-instance locks.
+- **Evaluation** scales from quick CI gates to automatic nightly evaluations of the full corpus via scheduled runner hooks.
 
 ---
 
