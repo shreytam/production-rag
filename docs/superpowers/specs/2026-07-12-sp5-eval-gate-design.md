@@ -35,13 +35,14 @@ Net effect: the eval gate is decorative and the tenant-isolation guarantee is un
 - **Fix the `answer_relevancy` embedding-space mismatch** (embed reverse-questions in query space).
 - **Run the REAL Qdrant + pgvector ACL isolation tests in CI** against ephemeral service containers, and **fail the build if the isolation suite SKIPS** (no silent skip on missing DB in CI).
 - **Make the eval job a required check**, with a defined, safe behavior for fork PRs that lack the secret.
+- **Hook for Custom Evaluations:** Ensure the evaluation harness has a clear entry point/extensibility to support custom domain-specific evaluation metrics and checks in subsequent iterations.
 
 ## 3. Non-goals (deferred) — owner named
 
 - **Cost/token accounting, per-run \$ budgets, spend dashboards** → **SP7** (Cost & Observability). This spec caps item count for wall-time but does not account cost.
 - **Retry/backoff, circuit-breaking, timeout tuning of NIM calls under load** → **SP6** (Resilience). We rely only on the existing `max_retries` in `providers/generators/openai_compatible.py:26`.
 - **Auth mechanism itself (JWT verifier, dev signer, token minting)** → **SP1** (Security & Tenancy). SP5 *consumes* a token to authenticate baseline generation; it does not build auth.
-- **New retrieval/generation metric definitions or a RAGAS-library swap** → out of scope; SP5 only fixes the `answer_relevancy` space bug and gates existing metrics.
+- **New retrieval/generation metric definitions or a RAGAS-library swap** → out of scope; SP5 only fixes the `answer_relevancy` space bug, gates existing metrics, and sets up hooks for custom metrics.
 - **Golden-dataset expansion / relabeling** → out of scope; SP5 gates over the existing `data/eval/hotpotqa.json` fixture.
 - **Physical per-tenant namespace isolation** → **VDB-Decision / SP11**. SP5 tests the current pooled-filter model.
 
@@ -243,3 +244,4 @@ Red-first, all runnable without a network or real DB (except the CI-only live jo
 - **Q4 — provider `seed` support.** If NIM ignores `seed`, D4 reduces to median-vote-at-temp-0. Confirm empirically during baseline generation; if variance is still high, raise `judge_votes` to 5.
 - **Q5 — flaky live services in CI.** The `acl-isolation` job must not become a new "always red" job (the very failure mode we're fixing). Hook: rely on the service `--health-*` options already modeled in `.github/workflows/eval-gate.yml:64-68` and a bounded connect timeout; a genuinely-down service is a real failure worth surfacing.
 - **Q6 — baseline provenance vs. `--limit 50` ingest.** The corpus is ingested at `--limit 50` but the gate scores a 15-item `fast_subset`; ensure the subset's relevant chunks are within the ingested 50. Hook: `run_eval` could warn if any golden `relevant_chunk_ids` are absent from the ingested corpus.
+- **Q7 — custom evaluations integration.** We must facilitate adding domain-specific custom checks (e.g., toxicity, safety, groundness) that can be run concurrently with standard RAGAS metrics. Hook: add a registration mechanism for custom metric functions in the evaluation runner that are called and evaluated under the same bootstrap comparison logic.
