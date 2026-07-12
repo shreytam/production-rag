@@ -1,7 +1,7 @@
 # SP3 · Compliance / Data Protection — Design Spec
 
 **Date:** 2026-07-12
-**Status:** Approved-in-discussion (core decisions locked with the user), pending written spec review → writing-plans
+**Status:** Approved (core decisions locked; optional salted value-hash added off-by-default per review) → adversarial spec-verification → writing-plans
 **Program:** Production-hardening, Phase 0 (risk-ordered). Third slice, after SP1 (Security) and SP2 (Guardrails).
 
 ---
@@ -47,6 +47,7 @@ PII flows through the system unprotected (verified against source):
 | `keep` mode | Index **with** PII, but **detection still runs**: tag `chunk.metadata["pii_types"]` and write the audit record ("know your data"). |
 | Detector | **Pluggable `PIIDetector` Protocol**; `RegexPIIDetector` default (zero-dep); `PresidioPIIDetector` optional behind a `pii-ner` extra; selected by `pii_detector`. |
 | Audit log | **Durable append-only JSONL**, records `{tenant_id, doc_id, chunk_id, type, start, end, ts}` — **type + location only, never the raw value**. |
+| Audit value hash | **Optional, off by default.** When `pii_audit_value_hash` is on, each record also carries `value_hash = sha256(salt + value)` (truncated) so the *same* value can be correlated across documents **without storing plaintext**. Requires a secret `pii_audit_hash_salt`; enabling it without a salt **fails closed at boot**. |
 | Ingest error policy | **Fail closed** — a detector error means the chunk is **not stored** (raise); in `keep` mode, an *audit-write* failure also aborts (never keep PII without a record). |
 | Observability | **Langfuse `mask` callback + trace-the-question-only-after-redaction + `langfuse_sample_rate`** (all three). |
 | Output scan | **`PIIGuardrail` added to the output guards** (REDACT path), gated by `pii_scan_output` (default `True`) — turn off when deliberately serving PII. |
@@ -73,7 +74,7 @@ class PIIDetector(Protocol):
 ### 5.3 Redaction + audit — `ingest/pii.py`, `ingest/audit.py`
 - `redact(text, spans) -> str` — applies `[TYPE]` placeholders right-to-left (offset-safe). Pure.
 - `PIIRedactor` (facade, keeps the name so `guardrails/pii_guard.py` is unchanged) — detect (via the configured detector) → redact → returns `(clean, findings)`; used by the input/output guards, where the action is always "redact".
-- `ingest/audit.py` · `PIIAuditLog` — an append-only JSONL sink at `pii_audit_log_path`; `record(tenant_id, doc_id, chunk_id, spans)` writes one line per span with **no raw value**. Durable, queryable, not itself a PII store.
+- `ingest/audit.py` · `PIIAuditLog` — an append-only JSONL sink at `pii_audit_log_path`; `record(tenant_id, doc_id, chunk_id, text, spans)` writes one line per span with **no raw value**. Durable, queryable, not itself a PII store. When `pii_audit_value_hash` is enabled, it slices `text[span.start:span.end]` to compute `value_hash = sha256(salt + value)[:16]`, writes the hash, and **discards the slice** — the raw value is never persisted. `PIISpan` stays value-free (§5.1); the source text is passed to `record` only so the hash can be computed transiently, and is unused when hashing is off.
 
 ### 5.4 Ingest policy step — `ingest/run.py`
 After chunking, before contextual prefixing/embedding, a `_apply_pii_policy(chunks, mode, detector, audit)` step:
@@ -112,6 +113,8 @@ QUERY:
 | `pii_mode` | `"redact"` | `redact` \| `keep` (index with PII, tagged) |
 | `pii_detector` | `"regex"` | `regex` \| `presidio` |
 | `pii_audit_log_path` | `".audit/pii_audit.jsonl"` | durable audit sink |
+| `pii_audit_value_hash` | `False` | add a salted hash per finding for cross-doc correlation (never the raw value) |
+| `pii_audit_hash_salt` | `None` | secret salt for the value hash; **required** when `pii_audit_value_hash` is on |
 | `pii_scan_output` | `True` | redact PII in answers |
 | `langfuse_sample_rate` | `1.0` | trace sampling for high volume |
 
@@ -122,6 +125,7 @@ QUERY:
 - **Ingest detector error → fail closed:** the chunk is not stored (raise) — never silently persist un-redacted PII.
 - **`keep`-mode audit-write failure → fail closed:** abort — never keep PII without an audit record. (In `redact` mode the data is already safe, so an audit-write failure logs an error and continues.)
 - **Langfuse mask error → fail closed:** emit a placeholder, never the raw value.
+- **Value-hash enabled without a salt → fail closed at boot:** `pii_audit_value_hash=True` with an empty `pii_audit_hash_salt` is rejected at startup — an unsalted hash of enumerable PII (an SSN, a card number) is trivially reversed by brute force, so we refuse to write one. (Even salted, this is a documented, off-by-default tradeoff: correlation without plaintext, but a leaked salt weakens known-format values.)
 - The `.audit/` directory is created on first write and is gitignored.
 
 ## 9. Testing (TDD)
@@ -131,6 +135,7 @@ Offline (fakes, no network):
 - **Ingest keep:** same doc → `chunk.text` retains the PII, `chunk.metadata["pii_types"]` lists the types, and an audit record is written.
 - **Detector Protocol:** `RegexPIIDetector.detect` returns `PIISpan`s (no value field); `redact` applies placeholders; `PresidioPIIDetector` test skipped when the extra isn't installed.
 - **Audit log:** JSONL is durable (survives a new `PIIAuditLog` instance), keyed by ids, and contains **no raw value**.
+- **Audit value hash:** with `pii_audit_value_hash=True` and a salt, two docs containing the same email produce **identical** `value_hash` values and a **different** hash from a third email; the raw value never appears in the JSONL; with hashing off, no `value_hash` field is written. Boot validation rejects hash-enabled-without-salt.
 - **Langfuse mask:** the mask callback redacts PII in a traced string; the root span never receives the raw question.
 - **Output scan:** an answer containing an email → `[EMAIL]` before return.
 - **Fail-closed:** a detector that raises at ingest → the chunk is not stored (exception propagates); `keep`-mode audit failure aborts.
@@ -145,4 +150,4 @@ Offline (fakes, no network):
 - **Per-tenant PII policy** → SP1.5 (attach `pii_mode` to a tenant in the registry).
 - **Query-time PII gating** → use `keep`-mode `pii_types` tags to filter/mask by caller permission.
 - **Reversible tokenization / vault** → only if a use case needs authorized detokenization in answers.
-- **Salted-hash of redacted values in the audit log** → if audit needs value-level correlation without storing plaintext (currently type+location only).
+- **Salted value-hash** → **now in scope, off by default** (`pii_audit_value_hash` + `pii_audit_hash_salt`); see §4/§5.3/§8. Future extension: per-tenant salt once SP1.5 supplies the tenant registry.
