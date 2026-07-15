@@ -8,9 +8,14 @@ consumes; `answer()` returns the rich `Answer` for the app/guardrails.
 
 from __future__ import annotations
 
+import logging
 import pickle
 from pathlib import Path
 from typing import Any
+
+from guardrails.input_injection import scan_for_injection
+
+logger = logging.getLogger(__name__)
 
 from core.config import Settings, get_settings
 from core.registry import (
@@ -128,6 +133,12 @@ class RAGPipeline:
                 scored, ms = timed(self.retriever.retrieve)(q)
                 latencies["retrieval_ms"] = ms
                 s_ret.update(output={"n_hits": len(scored)})
+                suspected = sorted({
+                    lbl for sc in scored for lbl in scan_for_injection(sc.chunk.text)
+                })
+                if suspected:
+                    s_ret.update(output={"indirect_injection_suspected": suspected})
+                    logger.warning("indirect_injection_suspected: %s", suspected)
 
             with self.tracer.span("generation", model=self.settings.gen_model) as s_gen:
                 ans, ms = timed(self.grounded.generate)(question, scored)
@@ -139,6 +150,9 @@ class RAGPipeline:
                         "completion_tokens": ans.usage.completion_tokens,
                     },
                 )
+
+            if suspected:
+                ans.metadata["indirect_injection_suspected"] = suspected
 
             # --- Output guardrails: citation / schema / groundedness ---------
             if self.guardrails is not None:
