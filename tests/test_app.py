@@ -156,3 +156,22 @@ def test_oversized_question_is_422(client, monkeypatch):
 def test_demo_imports_cleanly():
     """app.demo must be importable without a running backend or Streamlit."""
     import app.demo  # noqa: F401
+
+
+def test_demo_principal_roundtrip(monkeypatch):
+    """The demo's auth helper mints + verifies a token, yielding an ACL scoped to
+    the selected org — exercising the real verify path, not a raw dropdown value."""
+    from core import config
+
+    config.get_settings.cache_clear()
+    monkeypatch.setenv("AUTH_DEV_SIGNER_ENABLED", "true")
+    monkeypatch.setenv("JWT_SECRET", "demo-secret")
+    config.get_settings.cache_clear()
+
+    from app.auth import demo_principal
+
+    p = demo_principal("tenant_a", acl_tags=("finance",))
+    assert p.to_acl().tenant_id == "tenant_a"
+    assert set(p.acl_tags) == {"finance"}
+
+    config.get_settings.cache_clear()
