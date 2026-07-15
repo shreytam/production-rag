@@ -95,31 +95,42 @@ class RAGPipeline:
     def answer(self, question: str, acl: ACLContext | None = None) -> Answer:
         acl = acl or self.default_acl
 
-        # One root trace per query; guardrails + retrieval + generation nest under it.
         latencies: dict[str, float] = {}
         guard_log: dict[str, list] = {}
+
+        # 1. Apply input guard check BEFORE creating the root observation span
+        # to ensure raw unredacted questions never land in default span parameters
+        if self.guardrails is not None:
+            in_results = self.guardrails.check_input(question)
+            guard_log["input"] = [r.model_dump() for r in in_results]
+            
+            if self.guardrails.blocked(in_results):
+                # Trace details of check blocks safely
+                with self.tracer.span(
+                    "rag.query", question="[BLOCKED]", tenant=acl.tenant_id
+                ) as root:
+                    reason = "; ".join(r.reason for r in in_results if not r.ok)
+                    root.update(
+                        output={
+                            "refused": True,
+                            "blocked_by": "input_guardrail",
+                            "reason": reason,
+                        }
+                    )
+                return self._refused(
+                    "This request was blocked by an input safety check.", in_results
+                )
+            # Safe clean value
+            question = self.guardrails.apply_redactions(question, in_results)
+
+        # 2. Main observation span initialized with the redacted/clean form
         with self.tracer.span(
             "rag.query", question=question, tenant=acl.tenant_id
         ) as root:
-            # --- Input guardrails (cheap, deterministic): block or redact ----
-            if self.guardrails is not None:
+            # We recreate safe tracing records since actual redaction ran
+            if self.guardrails is not None and guard_log:
                 with self.tracer.span("guardrail.input") as s_in:
-                    in_results = self.guardrails.check_input(question)
-                    guard_log["input"] = [r.model_dump() for r in in_results]
                     s_in.update(output={"actions": [r.action.value for r in in_results]})
-                    if self.guardrails.blocked(in_results):
-                        reason = "; ".join(r.reason for r in in_results if not r.ok)
-                        root.update(
-                            output={
-                                "refused": True,
-                                "blocked_by": "input_guardrail",
-                                "reason": reason,
-                            }
-                        )
-                        return self._refused(
-                            "This request was blocked by an input safety check.", in_results
-                        )
-                    question = self.guardrails.apply_redactions(question, in_results)
 
             q = Query(
                 text=question,

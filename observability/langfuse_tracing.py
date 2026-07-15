@@ -125,10 +125,34 @@ class Tracer:
                     host=settings.langfuse_host,
                     public_key=settings.langfuse_public_key,
                     secret_key=settings.langfuse_secret_key,
+                    mask=self._mask_data,
+                    sample_rate=settings.langfuse_sample_rate,
                 )
             except Exception:
                 # If Langfuse fails to initialise, degrade silently
                 self._enabled = False
+
+    def _mask_data(self, data: Any) -> Any:
+        """Recursively scan and redact PII from traced attributes using PIIRedactor."""
+        from ingest.pii import PIIRedactor
+        
+        redactor = PIIRedactor()
+        
+        if isinstance(data, str):
+            try:
+                cleaned, _ = redactor.redact(data)
+                return cleaned
+            except Exception:
+                # Fail-closed: return placeholder on mask error
+                return "[PII_REDCTION_ERROR]"
+                
+        if isinstance(data, dict):
+            return {k: self._mask_data(v) for k, v in data.items()}
+            
+        if isinstance(data, list):
+            return [self._mask_data(item) for item in data]
+            
+        return data
 
     # ------------------------------------------------------------------
     # Context manager: tracer.span("stage", metadata=...)
