@@ -30,6 +30,12 @@ from retrieval.hybrid import DenseRetriever, HybridRetriever
 DEFAULT_TENANT = "public"
 
 
+OUTPUT_BLOCK_MESSAGE = (
+    "I can't provide an answer that passes the system's safety and grounding "
+    "checks for this request."
+)
+
+
 def _dedup(ids: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -178,6 +184,23 @@ class RAGPipeline:
         ans.metadata["cost_usd"] = cost
         if guard_log:
             ans.metadata["guardrails"] = guard_log
+
+        # SP2: an output-guardrail BLOCK must surface ONLY a generic refusal —
+        # scrub the content AND every metadata copy of it. The block reason stays
+        # in the trace/log (set on the root span), never on the returned object.
+        if ans.metadata.get("blocked_by") == "output_guardrail":
+            ans.text = OUTPUT_BLOCK_MESSAGE
+            ans.citations = []
+            ans.contexts = []
+            ans.metadata["retrieved_doc_ids"] = []
+            ans.metadata["retrieved_chunk_ids"] = []
+            ans.metadata.pop("structured_output", None)
+            ans.metadata.pop("block_reason", None)
+            for phase_results in ans.metadata.get("guardrails", {}).values():
+                for r in phase_results:
+                    r.pop("reason", None)
+                    r.pop("payload", None)
+                    r.pop("metadata", None)
         return ans
 
     def run(self, question: str, acl: ACLContext | None = None) -> dict[str, Any]:

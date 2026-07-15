@@ -626,6 +626,48 @@ def test_scan_for_injection_returns_strong_labels():
     assert scan_for_injection("The quarterly revenue grew 4%.") == []
 
 
+def test_output_block_suppresses_content_and_metadata():
+    from core.config import get_settings
+    from core.pipeline import OUTPUT_BLOCK_MESSAGE, RAGPipeline
+    from core.types import ACLContext, GuardrailResult, Chunk, ScoredChunk, GuardrailAction, Answer
+    from guardrails.runner import GuardrailRunner
+    from generation.grounded_generator import GroundedGenerator
+    from tests._fakes import RecordingGenerator
+
+    class _FakeRetriever:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        def retrieve(self, query):
+            return self._chunks
+
+    class _AlwaysBlock:
+        name = "always_block"
+
+        def check(self, text, *, context=None):
+            return GuardrailResult(name=self.name, action=GuardrailAction.BLOCK, reason="nope")
+
+    chunk = Chunk(chunk_id="c1", doc_id="d1", text="secret data", tenant_id="public")
+    scored = [ScoredChunk(chunk=chunk, score=1.0)]
+    gg = GroundedGenerator(
+        RecordingGenerator(parsed={"answer": "leaked secret [1]", "citations": [1], "refused": False}),
+        token_budget=500)
+    pipe = RAGPipeline(_FakeRetriever(scored), gg, get_settings(), tracer=None,
+                       guardrails=GuardrailRunner(output_guards=[_AlwaysBlock()]))
+    out = pipe.run("q", ACLContext(tenant_id="public"))
+
+    assert out["answer"] == OUTPUT_BLOCK_MESSAGE
+    assert out["refused"] is True
+    assert out["citations"] == []
+    assert out["contexts"] == []
+    assert out["retrieved_ids"] == []
+    ao = out["answer_obj"]
+    assert "structured_output" not in ao.metadata
+    assert "block_reason" not in ao.metadata
+    assert "leaked" not in str(ao.metadata)  # no residual answer text anywhere in metadata
+
+
+
 
 
 
