@@ -16,7 +16,7 @@ from core.types import Document, Chunk, ChatMessage, LLMResponse
 from ingest.base import GoldenItem, assign_tenants, tenant_split_keeping_gold
 from ingest.chunking import chunk_document
 from ingest.contextual import ContextualPrefixer
-from ingest.pii import redact, PIIRedactor
+from ingest.pii import PIIRedactor
 
 
 # ---------------------------------------------------------------------------
@@ -224,36 +224,36 @@ class TestPII:
     def test_email_and_phone_redacted_two_findings(self):
         """A string with one email + one phone yields exactly 2 findings."""
         text = "Contact me at alice@example.com or call (555) 123-4567."
-        redacted, findings = redact(text)
+        redacted, findings = PIIRedactor().redact(text)
         assert len(findings) == 2
         types = {f["type"] for f in findings}
         assert "EMAIL" in types
         assert "PHONE" in types
 
     def test_email_redacted(self):
-        redacted, findings = redact("Send mail to bob@corp.org please.")
+        redacted, findings = PIIRedactor().redact("Send mail to bob@corp.org please.")
         assert "[EMAIL]" in redacted
         assert "bob@corp.org" not in redacted
         assert any(f["type"] == "EMAIL" for f in findings)
 
     def test_phone_redacted(self):
-        redacted, findings = redact("Call 555-867-5309 now.")
+        redacted, findings = PIIRedactor().redact("Call 555-867-5309 now.")
         assert "[PHONE]" in redacted
         assert any(f["type"] == "PHONE" for f in findings)
 
     def test_ssn_redacted(self):
-        redacted, findings = redact("My SSN is 123-45-6789 and I need help.")
+        redacted, findings = PIIRedactor().redact("My SSN is 123-45-6789 and I need help.")
         assert "[SSN]" in redacted
         assert any(f["type"] == "SSN" for f in findings)
 
     def test_credit_card_redacted(self):
-        redacted, findings = redact("Card number: 4111 1111 1111 1111 expires soon.")
+        redacted, findings = PIIRedactor().redact("Card number: 4111 1111 1111 1111 expires soon.")
         assert "[CREDIT_CARD]" in redacted
         assert any(f["type"] == "CREDIT_CARD" for f in findings)
 
     def test_no_pii_unchanged(self):
         text = "The quick brown fox jumps over the lazy dog."
-        redacted, findings = redact(text)
+        redacted, findings = PIIRedactor().redact(text)
         assert redacted == text
         assert findings == []
 
@@ -264,12 +264,13 @@ class TestPII:
         assert len(r.audit_log) == 2
 
     def test_findings_have_required_keys(self):
-        _, findings = redact("user@host.io and (312) 555-9876")
+        _, findings = PIIRedactor().redact("user@host.io and (312) 555-9876")
         for f in findings:
             assert "type" in f
-            assert "value" in f
             assert "start" in f
             assert "end" in f
+            assert "value" not in f
+
 
 
 # ---------------------------------------------------------------------------
