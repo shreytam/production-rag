@@ -73,3 +73,18 @@ def test_autherror_carries_status():
     assert e.status == 403
     assert e.detail == "nope"
     assert str(e) == "nope"
+
+
+import jwt as _jwt  # pyjwt
+
+from providers.auth.dev_signer import mint_token
+
+
+def test_mint_token_roundtrips_claims():
+    token = mint_token(tenant_id="acme", acl_tags=["finance", "hr"], secret="s3cret",
+                       issuer="test-iss", audience="test-aud", ttl_seconds=120)
+    decoded = _jwt.decode(token, "s3cret", algorithms=["HS256"],
+                          issuer="test-iss", audience="test-aud")
+    assert decoded["tenant_id"] == "acme"
+    assert decoded["acl_tags"] == ["finance", "hr"]
+    assert "exp" in decoded and "nbf" in decoded and "iat" in decoded
