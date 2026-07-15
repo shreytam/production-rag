@@ -125,11 +125,13 @@ def default_runner(generator: Generator | None = None) -> GuardrailRunner:
     GroundednessGuardrail is omitted when *generator* is None (offline /
     testing scenarios where no LLM is available).
     """
+    from core.config import get_settings
     from guardrails.input_injection import InjectionGuardrail
     from guardrails.pii_guard import PIIGuardrail
     from guardrails.citation_enforcement import CitationGuardrail
     from guardrails.schema_validation import SchemaGuardrail
 
+    s = get_settings()
     input_guards: list[Guardrail] = [
         InjectionGuardrail(generator=generator),  # type: ignore[arg-type]
         PIIGuardrail(),
@@ -142,6 +144,8 @@ def default_runner(generator: Generator | None = None) -> GuardrailRunner:
 
     if generator is not None:
         from guardrails.output_groundedness import GroundednessGuardrail
-        output_guards.append(GroundednessGuardrail(generator=generator))  # type: ignore[arg-type]
+        output_guards.append(
+            GroundednessGuardrail(generator=generator, timeout_seconds=s.groundedness_timeout_seconds)  # type: ignore[arg-type]
+        )
 
     return GuardrailRunner(input_guards=input_guards, output_guards=output_guards)

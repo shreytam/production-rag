@@ -431,3 +431,46 @@ def test_runner_fails_soft_when_not_fail_closed():
     assert "kaboom" in res[0].metadata["error"]
 
 
+def test_groundedness_is_not_fail_closed():
+    from guardrails.output_groundedness import GroundednessGuardrail
+    assert GroundednessGuardrail(generator=object()).fail_closed is False
+
+
+def test_groundedness_blocks_nonrefused_empty_context():
+    from core.types import Answer, GuardrailAction
+    from guardrails.output_groundedness import GroundednessGuardrail
+    g = GroundednessGuardrail(generator=object())
+    ans = Answer(text="made up", refused=False)
+    res = g.check("made up", context={"contexts": [], "answer": ans})
+    assert res.action == GuardrailAction.BLOCK
+
+
+def test_groundedness_passes_refused_empty_context():
+    from core.types import Answer, GuardrailAction
+    from guardrails.output_groundedness import GroundednessGuardrail
+    g = GroundednessGuardrail(generator=object())
+    ans = Answer(text="cannot answer", refused=True)
+    res = g.check("cannot answer", context={"contexts": [], "answer": ans})
+    assert res.action == GuardrailAction.PASS
+
+
+def test_groundedness_timeout_soft_fails_fast(monkeypatch):
+    import time as _time
+    import guardrails.output_groundedness as og
+    from core.types import Answer, GuardrailAction
+    from guardrails.output_groundedness import GroundednessGuardrail
+
+    def _slow(**kwargs):
+        _time.sleep(2.0)
+        return 1.0
+
+    monkeypatch.setattr(og, "faithfulness", _slow)
+    g = GroundednessGuardrail(generator=object(), timeout_seconds=0.2)
+    t0 = _time.perf_counter()
+    res = g.check("ans", context={"contexts": ["ctx"], "answer": Answer(text="ans")})
+    assert res.action == GuardrailAction.PASS
+    assert res.metadata["groundedness_unverified"] is True
+    assert _time.perf_counter() - t0 < 1.5  # returned well before the 2s sleep
+
+
+
