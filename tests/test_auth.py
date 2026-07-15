@@ -273,3 +273,25 @@ def test_static_allowlist_from_file(tmp_path):
     p.write_text(json.dumps({"acme": ["finance", "hr"]}))
     al = StaticAllowlist.from_file(str(p))
     assert apply_allowlist(al, "acme", ("finance", "legal")) == ("finance",)
+
+
+# --- Registry builders ---
+
+from core.registry import build_auth_verifier, build_allowlist
+
+
+def test_build_auth_verifier_hs256():
+    v = build_auth_verifier(Settings(jwt_alg="HS256", jwt_secret="s"))
+    token = mint_token(tenant_id="acme", secret="s")
+    assert v.verify(token).tenant_id == "acme"
+
+
+def test_build_allowlist_null_by_default():
+    assert isinstance(build_allowlist(Settings()), NullAllowlist)
+
+
+def test_build_allowlist_static_from_source(tmp_path):
+    p = tmp_path / "acl.json"
+    p.write_text(json.dumps({"acme": ["finance"]}))
+    al = build_allowlist(Settings(acl_allowlist_source=str(p)))
+    assert isinstance(al, StaticAllowlist)
