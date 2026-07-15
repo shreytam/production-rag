@@ -180,6 +180,14 @@ class RAGPipeline:
                     guard_log["output"] = [r.model_dump() for r in out_results]
                     s_out.update(output={"actions": [r.action.value for r in out_results]})
                     ans.text = self.guardrails.apply_redactions(ans.text, out_results)
+                    
+                    # Scrub metadata duplicate structured_output answer if redactions took place
+                    from core.types import GuardrailAction
+                    if any(r.action == GuardrailAction.REDACT for r in out_results):
+                        if "structured_output" in ans.metadata and "answer" in ans.metadata["structured_output"]:
+                            raw_meta_ans = ans.metadata["structured_output"]["answer"]
+                            ans.metadata["structured_output"]["answer"] = self.guardrails.apply_redactions(raw_meta_ans, out_results)
+
                     if self.guardrails.blocked(out_results):
                         ans.refused = True
                         ans.metadata["blocked_by"] = "output_guardrail"
