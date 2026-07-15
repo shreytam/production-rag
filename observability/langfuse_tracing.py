@@ -113,6 +113,7 @@ class Tracer:
             and bool(settings.langfuse_secret_key)
         )
         self._client: Any = None
+        self._pii_redactor: Any = None
 
         if self._enabled:
             # Lazy import — only when actually needed.  Kept inside this branch
@@ -134,17 +135,16 @@ class Tracer:
 
     def _mask_data(self, data: Any) -> Any:
         """Recursively scan and redact PII from traced attributes using PIIRedactor."""
-        from ingest.pii import PIIRedactor
-        
-        redactor = PIIRedactor()
-        
         if isinstance(data, str):
+            if self._pii_redactor is None:
+                from ingest.pii import PIIRedactor
+                self._pii_redactor = PIIRedactor()
             try:
-                cleaned, _ = redactor.redact(data)
+                cleaned, _ = self._pii_redactor.redact(data)
                 return cleaned
             except Exception:
                 # Fail-closed: return placeholder on mask error
-                return "[PII_REDCTION_ERROR]"
+                return "[PII_REDACTION_ERROR]"
                 
         if isinstance(data, dict):
             return {k: self._mask_data(v) for k, v in data.items()}

@@ -112,9 +112,9 @@ class ContextualPrefixer:
 
         # Post-scan defense-in-depth: if redact mode is active, block PII hallucinated by LLM
         if self.settings.pii_mode == "redact":
-            from providers.pii.regex_detector import RegexPIIDetector
+            from core.registry import build_pii_detector
             from ingest.pii import redact
-            spans = RegexPIIDetector().detect(prefix)
+            spans = build_pii_detector(self.settings).detect(prefix)
             prefix = redact(prefix, spans)
 
         cache_file.write_text(

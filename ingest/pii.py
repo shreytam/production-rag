@@ -1,6 +1,5 @@
 from __future__ import annotations
 from core.types import PIISpan
-from core.config import get_settings
 from core.registry import build_pii_detector
 
 def redact(text: str, spans: list[PIISpan]) -> str:
@@ -11,14 +10,20 @@ def redact(text: str, spans: list[PIISpan]) -> str:
     if not spans:
         return text
 
-    # Sort descending by span width to resolve overlaps in favor of longer targets
-    # Sort descending by start to do safely right-to-left replace
+    # Sort ascending by start; for ties, longer spans first.
     sorted_spans = sorted(spans, key=lambda x: (x.start, -(x.end - x.start)))
 
     accepted: list[PIISpan] = []
     last_end = -1
     for span in sorted_spans:
         if span.start < last_end:
+            # Overlaps the last accepted span. If it extends further, merge by
+            # widening that span instead of dropping it — dropping would leave
+            # the non-overlapping tail of this span unredacted.
+            if span.end > last_end:
+                prev = accepted[-1]
+                accepted[-1] = PIISpan(type=prev.type, start=prev.start, end=span.end)
+                last_end = span.end
             continue
         accepted.append(span)
         last_end = span.end
