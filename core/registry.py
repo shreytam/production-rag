@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Literal
 
 from core.config import Settings, get_settings
-from core.interfaces import Embedder, Generator, Reranker, SparseRetriever, VectorStore
+from core.interfaces import Embedder, Generator, Reranker, SparseRetriever, VectorStore, PIIDetector
 
 GeneratorRole = Literal["gen", "context", "judge"]
 
@@ -124,3 +124,15 @@ def build_allowlist(settings: Settings | None = None):
     from providers.auth.allowlist import StaticAllowlist
 
     return StaticAllowlist.from_file(s.acl_allowlist_source)
+
+
+def build_pii_detector(settings: Settings | None = None) -> PIIDetector:
+    s = settings or get_settings()
+    if s.pii_detector == "regex":
+        from providers.pii.regex_detector import RegexPIIDetector
+        return RegexPIIDetector()
+    elif s.pii_detector == "presidio":
+        from providers.pii.presidio_detector import PresidioPIIDetector
+        return PresidioPIIDetector()
+    raise ValueError(f"Unknown pii_detector configured: {s.pii_detector}")
+
