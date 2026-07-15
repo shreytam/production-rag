@@ -8,7 +8,6 @@ from core.config import Settings
 
 def test_auth_defaults_are_dev_friendly():
     s = Settings()
-    assert s.auth_enabled is True
     assert s.app_env == "dev"
     assert s.jwt_alg == "HS256"
     assert s.auth_dev_signer_enabled is False
@@ -161,6 +160,20 @@ def test_verify_audience_mismatch_rejected():
     token = mint_token(tenant_id="acme", secret=HS_SECRET, audience="aud-a")
     with pytest.raises(AuthError):
         _hs_verifier(audience="aud-b").verify(token)
+
+
+def test_verify_accepts_token_without_nbf():
+    # `nbf` (and `iat`) are OPTIONAL per RFC 7519; several real IdPs (e.g. Google ID
+    # tokens) omit it. The verifier must not require its presence — only `exp` is
+    # mandatory. Built directly with jwt.encode (bypassing mint_token, which always
+    # sets all three claims) so this token has `exp` but no `nbf`/`iat`.
+    token = _jwt.encode(
+        {"tenant_id": "acme", "exp": int(time.time()) + 60},
+        HS_SECRET,
+        algorithm="HS256",
+    )
+    p = _hs_verifier().verify(token)
+    assert p.tenant_id == "acme"
 
 
 # --- RS256 / JWKS + algorithm confusion ---

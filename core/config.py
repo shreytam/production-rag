@@ -95,7 +95,6 @@ class Settings(BaseSettings):
     guardrails_enabled: bool = True
 
     # --- Auth & tenancy (SP1) ---
-    auth_enabled: bool = True
     app_env: Literal["dev", "prod"] = "dev"
     jwt_alg: Literal["HS256", "RS256"] = "HS256"
     jwt_secret: str = ""          # HS256 shared secret (dev); presence enables minting
@@ -140,8 +139,6 @@ class Settings(BaseSettings):
     def _validate_auth(self) -> "Settings":
         """Prod instances must be securely configured — fail fast at construction."""
         if self.app_env == "prod":
-            if not self.auth_enabled:
-                raise ValueError("auth_enabled must be True when app_env=prod")
             if self.jwt_alg == "HS256" and not self.jwt_secret:
                 raise ValueError("HS256 requires jwt_secret when app_env=prod")
             if self.jwt_alg == "RS256" and not self.jwks_url:

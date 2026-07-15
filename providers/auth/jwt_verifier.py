@@ -97,7 +97,7 @@ class JWTVerifier:
 
     def verify(self, token: str) -> Principal:
         key = self._key_for(token)
-        options = {"require": ["exp", "iat", "nbf"], "verify_aud": bool(self._audience)}
+        options = {"require": ["exp"], "verify_aud": bool(self._audience)}
         try:
             claims = jwt.decode(
                 token,
