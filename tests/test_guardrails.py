@@ -401,3 +401,33 @@ def test_sp2_guardrail_config_defaults():
     assert s.injection_llm_escalation is True
     assert s.groundedness_timeout_seconds == 20.0
 
+
+class _Boom:
+    name = "boom"
+
+    def check(self, text, *, context=None):
+        raise ValueError("kaboom")
+
+
+class _BoomSoft(_Boom):
+    name = "boom_soft"
+    fail_closed = False
+
+
+def test_runner_fails_closed_on_exception():
+    from core.types import Answer, GuardrailAction
+    from guardrails.runner import GuardrailRunner
+    res = GuardrailRunner(output_guards=[_Boom()]).check_output(Answer(text="x"))
+    assert res[0].action == GuardrailAction.BLOCK
+    assert "kaboom" in res[0].metadata["error"]
+
+
+def test_runner_fails_soft_when_not_fail_closed():
+    from core.types import Answer, GuardrailAction
+    from guardrails.runner import GuardrailRunner
+    res = GuardrailRunner(output_guards=[_BoomSoft()]).check_output(Answer(text="x"))
+    assert res[0].action == GuardrailAction.PASS
+    assert res[0].metadata["groundedness_unverified"] is True
+    assert "kaboom" in res[0].metadata["error"]
+
+
