@@ -31,7 +31,7 @@ def _normalize(text: str) -> tuple[str, str]:
 
 # Patterns use \s* between tokens so they match in BOTH the spaced and compact forms.
 _STRONG: list[tuple[str, re.Pattern[str]]] = [
-    ("ignore_previous", re.compile(r"ignore\s*(previous|prior|above|all|\s+)*\s*instructions?", re.I)),
+    ("ignore_previous", re.compile(r"ignore\s*(all\s*)?(previous|prior|above)?\s*instructions?", re.I)),
     ("disregard_above", re.compile(r"disregard\s*(the\s*)?(above|previous|prior)", re.I)),
     ("forget_instructions", re.compile(r"forget\s*(your\s*)?(previous\s*)?instructions?", re.I)),
     ("reveal_prompt", re.compile(r"(reveal|show|print|output|repeat)\s*(your\s*)?(system|initial|original)\s*prompt", re.I)),
