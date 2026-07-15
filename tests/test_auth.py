@@ -245,3 +245,31 @@ def test_algorithm_confusion_hs_forged_with_rsa_pubkey_rejected():
     v = JWTVerifier(alg="RS256", jwks_fetcher=lambda url: jwks)
     with pytest.raises(AuthError):
         v.verify(forged)
+
+
+# --- Allowlist Tests ---
+
+from providers.auth.allowlist import NullAllowlist, StaticAllowlist, apply_allowlist
+
+
+def test_null_allowlist_passes_tags_through():
+    al = NullAllowlist()
+    assert al.allowed("acme") is None
+    assert apply_allowlist(al, "acme", ("finance", "hr")) == ("finance", "hr")
+
+
+def test_static_allowlist_intersects():
+    al = StaticAllowlist({"acme": ["finance"]})
+    assert apply_allowlist(al, "acme", ("finance", "hr")) == ("finance",)
+
+
+def test_static_allowlist_unknown_tenant_drops_all_tags():
+    al = StaticAllowlist({"acme": ["finance"]})
+    assert apply_allowlist(al, "globex", ("finance",)) == ()
+
+
+def test_static_allowlist_from_file(tmp_path):
+    p = tmp_path / "acl.json"
+    p.write_text(json.dumps({"acme": ["finance", "hr"]}))
+    al = StaticAllowlist.from_file(str(p))
+    assert apply_allowlist(al, "acme", ("finance", "legal")) == ("finance",)
