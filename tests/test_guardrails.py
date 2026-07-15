@@ -473,4 +473,33 @@ def test_groundedness_timeout_soft_fails_fast(monkeypatch):
     assert _time.perf_counter() - t0 < 1.5  # returned well before the 2s sleep
 
 
+def test_generator_stashes_valid_and_claimed_markers():
+    from core.types import Chunk, ScoredChunk
+    from generation.grounded_generator import GroundedGenerator
+    from tests._fakes import RecordingGenerator
+
+    def _one_chunk():
+        return [ScoredChunk(chunk=Chunk(chunk_id="c1", doc_id="d1", text="hello", tenant_id="public"), score=1.0)]
+
+    gen = RecordingGenerator(parsed={"answer": "x [1]", "citations": [1, 99], "refused": False})
+    ans = GroundedGenerator(gen, token_budget=500).generate("q", _one_chunk())
+    assert ans.metadata["valid_markers"] == [1]        # only passage 1 assembled
+    assert ans.metadata["claimed_markers"] == [1, 99]  # model's raw claims
+
+
+def test_generator_fallback_has_empty_claimed_markers():
+    from core.types import Chunk, ScoredChunk
+    from generation.grounded_generator import GroundedGenerator
+    from tests._fakes import RecordingGenerator
+
+    def _one_chunk():
+        return [ScoredChunk(chunk=Chunk(chunk_id="c1", doc_id="d1", text="hello", tenant_id="public"), score=1.0)]
+
+    gen = RecordingGenerator(text="answer [99]", parsed=None)  # model ignored the schema
+    ans = GroundedGenerator(gen, token_budget=500).generate("q", _one_chunk())
+    assert ans.metadata["claimed_markers"] == []
+    assert ans.metadata["valid_markers"] == [1]
+
+
+
 
