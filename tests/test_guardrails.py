@@ -363,6 +363,7 @@ def test_runner_default_factory_no_generator():
 
 def test_runner_default_factory_with_groundedness():
     from guardrails.runner import default_runner
+    from guardrails.output_groundedness import GroundednessGuardrail
 
     # Build a fake generator that covers citation check (no LLM calls needed for citation)
     # plus the two groundedness calls.

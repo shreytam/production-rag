@@ -11,6 +11,7 @@ Live (skipped if server unreachable):
 
 from __future__ import annotations
 
+import math
 import pytest
 
 from core.types import ACLContext, Chunk, RetrievalSource
