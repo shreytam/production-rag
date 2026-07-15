@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import json
+import time
+
+import jwt as _jwt  # pyjwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import ValidationError
 
 from core.config import Settings
+from core.interfaces import AuthError
+from core.registry import build_allowlist, build_auth_verifier
+from core.types import ACLContext, Principal
+from providers.auth.allowlist import NullAllowlist, StaticAllowlist, apply_allowlist
+from providers.auth.dev_signer import mint_token
+from providers.auth.jwt_verifier import JWTVerifier
 
 
 def test_auth_defaults_are_dev_friendly():
@@ -39,10 +51,6 @@ def test_prod_valid_config_constructs():
     assert s.app_env == "prod"
 
 
-from core.types import ACLContext, Principal
-from core.interfaces import AuthError
-
-
 def test_principal_to_acl_maps_tenant_and_tags():
     p = Principal(tenant_id="acme", acl_tags=("finance",), subject="u1", claims={"sub": "u1"})
     acl = p.to_acl()
@@ -74,11 +82,6 @@ def test_autherror_carries_status():
     assert str(e) == "nope"
 
 
-import jwt as _jwt  # pyjwt
-
-from providers.auth.dev_signer import mint_token
-
-
 def test_mint_token_roundtrips_claims():
     token = mint_token(tenant_id="acme", acl_tags=["finance", "hr"], secret="s3cret",
                        issuer="test-iss", audience="test-aud", ttl_seconds=120)
@@ -88,14 +91,6 @@ def test_mint_token_roundtrips_claims():
     assert decoded["acl_tags"] == ["finance", "hr"]
     assert "exp" in decoded and "nbf" in decoded and "iat" in decoded
 
-
-import json
-import time
-
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-
-from providers.auth.jwt_verifier import JWTVerifier
 
 HS_SECRET = "unit-test-secret"
 
@@ -262,8 +257,6 @@ def test_algorithm_confusion_hs_forged_with_rsa_pubkey_rejected():
 
 # --- Allowlist Tests ---
 
-from providers.auth.allowlist import NullAllowlist, StaticAllowlist, apply_allowlist
-
 
 def test_null_allowlist_passes_tags_through():
     al = NullAllowlist()
@@ -289,8 +282,6 @@ def test_static_allowlist_from_file(tmp_path):
 
 
 # --- Registry builders ---
-
-from core.registry import build_auth_verifier, build_allowlist
 
 
 def test_build_auth_verifier_hs256():
