@@ -97,11 +97,24 @@ class GuardrailRunner:
         text: str,
         context: dict | None = None,
     ) -> GuardrailResult:
-        """Call *guard.check* and inject latency_ms into the result's metadata."""
+        """Call *guard.check*, catching exceptions per the guard's fail policy.
+
+        A guard must never 500 a request. Deterministic guards fail closed
+        (BLOCK); a guard that sets ``fail_closed = False`` (groundedness) fails
+        soft (PASS + ``groundedness_unverified``). Every exception is recorded.
+        """
         t0 = time.perf_counter()
-        result = guard.check(text, context=context)
+        try:
+            result = guard.check(text, context=context)
+        except Exception as e:  # noqa: BLE001 — a broken guard must not crash the request
+            fail_closed = getattr(guard, "fail_closed", True)
+            result = GuardrailResult(
+                name=getattr(guard, "name", "unknown"),
+                action=GuardrailAction.BLOCK if fail_closed else GuardrailAction.PASS,
+                reason=f"guard errored: {type(e).__name__}",
+                metadata={"error": str(e), "groundedness_unverified": not fail_closed},
+            )
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        # metadata is a plain dict on a Pydantic model — mutable in place.
         result.metadata["latency_ms"] = round(elapsed_ms, 3)
         return result
 
@@ -112,13 +125,15 @@ def default_runner(generator: Generator | None = None) -> GuardrailRunner:
     GroundednessGuardrail is omitted when *generator* is None (offline /
     testing scenarios where no LLM is available).
     """
+    from core.config import get_settings
     from guardrails.input_injection import InjectionGuardrail
     from guardrails.pii_guard import PIIGuardrail
     from guardrails.citation_enforcement import CitationGuardrail
     from guardrails.schema_validation import SchemaGuardrail
 
+    s = get_settings()
     input_guards: list[Guardrail] = [
-        InjectionGuardrail(generator=generator),  # type: ignore[arg-type]
+        InjectionGuardrail(generator=generator, llm_escalation=s.injection_llm_escalation),  # type: ignore[arg-type]
         PIIGuardrail(),
     ]
 
@@ -129,6 +144,8 @@ def default_runner(generator: Generator | None = None) -> GuardrailRunner:
 
     if generator is not None:
         from guardrails.output_groundedness import GroundednessGuardrail
-        output_guards.append(GroundednessGuardrail(generator=generator))  # type: ignore[arg-type]
+        output_guards.append(
+            GroundednessGuardrail(generator=generator, timeout_seconds=s.groundedness_timeout_seconds)  # type: ignore[arg-type]
+        )
 
     return GuardrailRunner(input_guards=input_guards, output_guards=output_guards)

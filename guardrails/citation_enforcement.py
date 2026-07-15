@@ -62,4 +62,20 @@ class CitationGuardrail:
                 metadata={"hallucinated_chunk_ids": hallucinated},
             )
 
+        # SP2: verify the model's CLAIMED citation markers point at real passages.
+        # Only claimed markers are checked (never arbitrary bracketed prose), and the
+        # check is skipped when the markers weren't stashed (directly-built Answers).
+        valid = answer.metadata.get("valid_markers")
+        claimed = answer.metadata.get("claimed_markers")
+        if valid is not None and claimed is not None:
+            valid_set = set(valid)
+            phantom = [m for m in claimed if m not in valid_set]
+            if phantom:
+                return GuardrailResult(
+                    name=self.name,
+                    action=GuardrailAction.BLOCK,
+                    reason=f"Claimed citation marker(s) with no passage: {phantom}",
+                    metadata={"phantom_markers": phantom},
+                )
+
         return GuardrailResult(name=self.name, action=GuardrailAction.PASS)

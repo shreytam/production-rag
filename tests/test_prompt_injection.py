@@ -95,3 +95,28 @@ def test_output_guardrail_blocks_a_hijacked_answer():
         hijacked.text, context={"answer": hijacked, "context_chunk_ids": {"good::0"}}
     )
     assert result.action == GuardrailAction.BLOCK
+
+
+def test_indirect_injection_flags_but_does_not_block():
+    from core.config import get_settings
+    from core.pipeline import RAGPipeline
+    from core.types import ScoredChunk
+
+    class _FixedRetriever:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        def retrieve(self, query):
+            return self._chunks
+
+    poison = Chunk(chunk_id="c1", doc_id="d1", text=POISON, tenant_id="public")
+    scored = [ScoredChunk(chunk=poison, score=1.0)]
+    gg = GroundedGenerator(
+        RecordingGenerator(parsed={"answer": "Revenue was X [1]", "citations": [1], "refused": False}),
+        token_budget=500)
+    pipe = RAGPipeline(_FixedRetriever(scored), gg, get_settings(), tracer=None, guardrails=None)
+    out = pipe.run("what is the revenue?", ACLContext(tenant_id="public"))
+
+    assert out["refused"] is False  # NOT blocked
+    assert "ignore_previous" in out["answer_obj"].metadata["indirect_injection_suspected"]
+

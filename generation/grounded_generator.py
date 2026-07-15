@@ -52,11 +52,15 @@ class GroundedGenerator:
             answer_text = parsed.answer
             markers = list(parsed.citations)
             refused = parsed.refused
+            claimed = sorted(set(int(m) for m in parsed.citations))
         else:
-            # Fallback: model didn't honor the schema — use raw text and scrape markers.
+            # Fallback: model didn't honor the schema — scrape markers from text.
+            # We cannot distinguish a claimed citation from incidental prose here,
+            # so there are no verifiable claims.
             answer_text = resp.text
             markers = [int(m) for m in _MARKER_RE.findall(answer_text)]
             refused = False
+            claimed = []
 
         # Always reconcile with markers actually present in the answer text.
         markers = sorted(set(markers) | {int(m) for m in _MARKER_RE.findall(answer_text)})
@@ -85,4 +89,6 @@ class GroundedGenerator:
             "citations": markers,
             "refused": refused,
         }
+        answer.metadata["valid_markers"] = sorted(marker_map.keys())
+        answer.metadata["claimed_markers"] = claimed
         return answer

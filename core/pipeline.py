@@ -8,6 +8,7 @@ consumes; `answer()` returns the rich `Answer` for the app/guardrails.
 
 from __future__ import annotations
 
+import logging
 import pickle
 from pathlib import Path
 from typing import Any
@@ -22,12 +23,21 @@ from core.registry import (
 )
 from core.types import ACLContext, Answer, Query
 from generation.grounded_generator import GroundedGenerator
+from guardrails.input_injection import scan_for_injection
 from guardrails.runner import GuardrailRunner, default_runner
 from observability.cost import cost_usd
 from observability.langfuse_tracing import Tracer, timed
 from retrieval.hybrid import DenseRetriever, HybridRetriever
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_TENANT = "public"
+
+
+OUTPUT_BLOCK_MESSAGE = (
+    "I can't provide an answer that passes the system's safety and grounding "
+    "checks for this request."
+)
 
 
 def _dedup(ids: list[str]) -> list[str]:
@@ -122,6 +132,12 @@ class RAGPipeline:
                 scored, ms = timed(self.retriever.retrieve)(q)
                 latencies["retrieval_ms"] = ms
                 s_ret.update(output={"n_hits": len(scored)})
+                suspected = sorted({
+                    lbl for sc in scored for lbl in scan_for_injection(sc.chunk.text)
+                })
+                if suspected:
+                    s_ret.update(output={"indirect_injection_suspected": suspected})
+                    logger.warning("indirect_injection_suspected: %s", suspected)
 
             with self.tracer.span("generation", model=self.settings.gen_model) as s_gen:
                 ans, ms = timed(self.grounded.generate)(question, scored)
@@ -133,6 +149,9 @@ class RAGPipeline:
                         "completion_tokens": ans.usage.completion_tokens,
                     },
                 )
+
+            if suspected:
+                ans.metadata["indirect_injection_suspected"] = suspected
 
             # --- Output guardrails: citation / schema / groundedness ---------
             if self.guardrails is not None:
@@ -178,6 +197,23 @@ class RAGPipeline:
         ans.metadata["cost_usd"] = cost
         if guard_log:
             ans.metadata["guardrails"] = guard_log
+
+        # SP2: an output-guardrail BLOCK must surface ONLY a generic refusal —
+        # scrub the content AND every metadata copy of it. The block reason stays
+        # in the trace/log (set on the root span), never on the returned object.
+        if ans.metadata.get("blocked_by") == "output_guardrail":
+            ans.text = OUTPUT_BLOCK_MESSAGE
+            ans.citations = []
+            ans.contexts = []
+            ans.metadata["retrieved_doc_ids"] = []
+            ans.metadata["retrieved_chunk_ids"] = []
+            ans.metadata.pop("structured_output", None)
+            ans.metadata.pop("block_reason", None)
+            for phase_results in ans.metadata.get("guardrails", {}).values():
+                for r in phase_results:
+                    r.pop("reason", None)
+                    r.pop("payload", None)
+                    r.pop("metadata", None)
         return ans
 
     def run(self, question: str, acl: ACLContext | None = None) -> dict[str, Any]:
