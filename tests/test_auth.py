@@ -295,3 +295,25 @@ def test_build_allowlist_static_from_source(tmp_path):
     p.write_text(json.dumps({"acme": ["finance"]}))
     al = build_allowlist(Settings(acl_allowlist_source=str(p)))
     assert isinstance(al, StaticAllowlist)
+
+
+# --- mint_token CLI ---
+
+
+def test_cli_build_token_verifies():
+    from core.config import Settings
+    from scripts.mint_token import build_token
+
+    s = Settings(auth_dev_signer_enabled=True, jwt_secret="cli-secret")
+    token = build_token(s, tenant="acme", tags=["finance"], ttl=60)
+    v = build_auth_verifier(s)
+    assert v.verify(token).tenant_id == "acme"
+
+
+def test_cli_build_token_requires_dev_signer():
+    from core.config import Settings
+    from scripts.mint_token import build_token
+
+    s = Settings(auth_dev_signer_enabled=False, jwt_secret="")
+    with pytest.raises(RuntimeError):
+        build_token(s, tenant="acme", tags=[], ttl=60)
