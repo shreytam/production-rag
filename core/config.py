@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
 
+    # --- PII & Compliance ---
+    pii_mode: Literal["redact", "keep"] = "redact"
+    pii_detector: Literal["regex", "presidio"] = "regex"
+    pii_audit_log_path: str = ".audit/pii_audit.jsonl"
+    pii_audit_value_hash: bool = False
+    pii_audit_hash_salt: str | None = None
+    pii_scan_output: bool = True
+    langfuse_sample_rate: float = 1.0
+
     # --- Ingest sizing (keep corpora small to respect NIM rate limits) ---
     max_chunks_per_corpus: int = 2000
     contextual_cache_dir: str = ".cache/contextual"
@@ -152,6 +161,15 @@ class Settings(BaseSettings):
             if self.auth_dev_signer_enabled:
                 raise ValueError("auth_dev_signer_enabled must be False when app_env=prod")
         return self
+
+    @model_validator(mode="after")
+    def _validate_pii_settings(self) -> "Settings":
+        if self.pii_audit_value_hash and not self.pii_audit_hash_salt:
+            raise ValueError(
+                "pii_audit_hash_salt must be set when pii_audit_value_hash is True to prevent hash brute-forcing."
+            )
+        return self
+
 
 
 @lru_cache

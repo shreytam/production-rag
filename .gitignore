@@ -35,3 +35,7 @@ eval/runs/
 
 # Throwaway API test payload
 payload.json
+
+# Durable audit logs
+.audit/
+

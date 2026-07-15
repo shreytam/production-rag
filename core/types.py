@@ -212,3 +212,19 @@ class GuardrailResult(BaseModel):
     @property
     def ok(self) -> bool:
         return self.action != GuardrailAction.BLOCK
+
+
+class PIISpan(BaseModel):
+    """Represents a validated block of detected PII.
+    
+    SECURITY: Contains only coordinates and type; never holds the segment's raw text.
+    """
+    type: str
+    start: int
+    end: int
+
+    model_config = {
+        "frozen": True,
+        "extra": "forbid"
+    }
+

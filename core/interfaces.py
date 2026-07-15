@@ -22,6 +22,7 @@ from core.types import (
     ChatMessage,
     ScoredChunk,
     Vector,
+    PIISpan,
 )
 
 
@@ -125,3 +126,10 @@ class TenantAllowlist(Protocol):
     (claims pass through), else the frozenset of tags the tenant may hold."""
 
     def allowed(self, tenant_id: str) -> frozenset[str] | None: ...
+
+
+@runtime_checkable
+class PIIDetector(Protocol):
+    """Contract for a PII detection engine."""
+    def detect(self, text: str) -> list[PIISpan]: ...
+
