@@ -38,3 +38,38 @@ def test_prod_valid_config_constructs():
     s = Settings(app_env="prod", jwt_alg="RS256", jwks_url="https://idp/jwks",
                  jwt_issuer="iss", jwt_audience="aud")
     assert s.app_env == "prod"
+
+
+from core.types import ACLContext, Principal
+from core.interfaces import AuthError, AuthVerifier, TenantAllowlist
+
+
+def test_principal_to_acl_maps_tenant_and_tags():
+    p = Principal(tenant_id="acme", acl_tags=("finance",), subject="u1", claims={"sub": "u1"})
+    acl = p.to_acl()
+    assert isinstance(acl, ACLContext)
+    assert acl.tenant_id == "acme"
+    assert acl.acl_tags == ("finance",)
+
+
+def test_principal_rejects_blank_tenant():
+    with pytest.raises(Exception):
+        Principal(tenant_id="  ", acl_tags=())
+
+
+def test_principal_is_frozen():
+    p = Principal(tenant_id="acme")
+    with pytest.raises(Exception):
+        p.tenant_id = "other"
+
+
+def test_aclcontext_rejects_blank_tenant():
+    with pytest.raises(Exception):
+        ACLContext(tenant_id="")
+
+
+def test_autherror_carries_status():
+    e = AuthError("nope", status=403)
+    assert e.status == 403
+    assert e.detail == "nope"
+    assert str(e) == "nope"
