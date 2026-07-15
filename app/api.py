@@ -1,20 +1,20 @@
 """FastAPI application for the Production RAG system.
 
-Security note: tenant identity is derived exclusively from the authenticated
-request (X-Tenant-Id header or request body), never from the question text.
-In production, X-Tenant-Id would be a verified JWT claim extracted by an
-auth middleware; the body fallback exists only for demo convenience and MUST
-be removed in production.
+Security: tenant identity is derived ONLY from a cryptographically verified JWT
+(see app.auth.require_principal). There is no client-controlled identity path —
+the request body carries only the question.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
-from core.types import ACLContext
+from app.auth import require_principal
+from core.config import get_settings
+from core.types import Principal
 
 # ---------------------------------------------------------------------------
 # Pipeline singleton — built lazily on first request so that importing this
@@ -29,6 +29,7 @@ def get_pipeline():
     global _pipeline
     if _pipeline is None:
         from core.pipeline import build  # heavy import deferred intentionally
+
         _pipeline = build(version="full", dataset=None)
     return _pipeline
 
@@ -45,12 +46,9 @@ app = FastAPI(title="Production RAG API", version="1.0.0")
 
 
 class QueryRequest(BaseModel):
-    question: str
-    # In production, tenant_id is extracted from a verified token/session,
-    # never trusted from the raw request body.  Here we accept it in the body
-    # only as a demo fallback when the X-Tenant-Id header is absent.
-    tenant_id: str = "public"
-    acl_tags: list[str] = []
+    # Identity (tenant_id/acl_tags) intentionally REMOVED — it comes only from the
+    # verified token. The body carries only the question.
+    question: str = Field(min_length=1)
 
 
 class QueryResponse(BaseModel):
@@ -69,15 +67,13 @@ def healthz():
 @app.post("/query", response_model=QueryResponse)
 def query(
     body: QueryRequest,
+    principal: Principal = Depends(require_principal),
     pipeline=Depends(get_pipeline),
-    x_tenant_id: str | None = Header(default=None),
 ):
-    # Tenant identity: header takes precedence over body (closer to a real auth
-    # flow where the header would carry a verified claim).
-    tenant_id = x_tenant_id if x_tenant_id is not None else body.tenant_id
+    if len(body.question) > get_settings().max_question_chars:
+        raise HTTPException(status_code=422, detail="question too long")
 
-    # Build ACL server-side; question text plays no part.
-    acl = ACLContext(tenant_id=tenant_id, acl_tags=tuple(body.acl_tags))
+    acl = principal.to_acl()  # identity from the verified token only
 
     # Guardrails (input + output) run inside pipeline.run; a blocked request
     # returns refused=True rather than raising.

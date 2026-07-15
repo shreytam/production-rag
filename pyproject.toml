@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 eval = ["datasets>=2.20", "scipy>=1.13", "pandas>=2.2"]
 rerank-local = ["sentence-transformers>=3.0"]
-app = ["fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37"]
+app = ["fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37", "pyjwt[crypto]>=2.9"]
 obs = ["langfuse>=4"]
 # Optional: cross-check our native RAGAS-style metrics against the real library.
 # Not part of the core/CI path (the native metrics are the spine); install with
@@ -33,7 +33,7 @@ dev = ["pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6"]
 all = [
     "datasets>=2.20", "scipy>=1.13", "pandas>=2.2",
     "sentence-transformers>=3.0",
-    "fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37",
+    "fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37", "pyjwt[crypto]>=2.9",
     "langfuse>=4",
     "pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6",
 ]

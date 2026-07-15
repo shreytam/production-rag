@@ -96,3 +96,31 @@ def build_generator(role: GeneratorRole = "gen", settings: Settings | None = Non
         }[role]
         return AnthropicGenerator(model, s.anthropic_api_key)
     raise ValueError(f"Unknown provider for role {role}: {provider}")
+
+
+def build_auth_verifier(settings: Settings | None = None):
+    """Build the JWT verifier from config (the only place its class is named)."""
+    s = settings or get_settings()
+    from providers.auth.jwt_verifier import JWTVerifier
+
+    return JWTVerifier(
+        alg=s.jwt_alg,
+        hs_secret=s.jwt_secret,
+        jwks_url=s.jwks_url,
+        issuer=s.jwt_issuer,
+        audience=s.jwt_audience,
+        leeway_seconds=s.jwt_leeway_seconds,
+        max_acl_tags=s.max_acl_tags,
+    )
+
+
+def build_allowlist(settings: Settings | None = None):
+    """Build the tenant allowlist: NullAllowlist unless acl_allowlist_source is set."""
+    s = settings or get_settings()
+    if not s.acl_allowlist_source:
+        from providers.auth.allowlist import NullAllowlist
+
+        return NullAllowlist()
+    from providers.auth.allowlist import StaticAllowlist
+
+    return StaticAllowlist.from_file(s.acl_allowlist_source)

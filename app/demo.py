@@ -24,7 +24,6 @@ def _run_app():
     """Entry-point called only when running under Streamlit."""
     # Deferred imports so the module can be imported without services.
     from core.pipeline import build  # noqa: PLC0415
-    from core.types import ACLContext  # noqa: PLC0415
     from observability.cost import cost_usd  # noqa: PLC0415
 
     @st.cache_resource(show_spinner="Loading pipeline…")
@@ -58,7 +57,14 @@ def _run_app():
 
     if st.button("Submit") and question.strip():
         pipeline = _get_pipeline(version, dataset)
-        acl = ACLContext(tenant_id=tenant)
+
+        from app.auth import demo_principal  # noqa: PLC0415
+
+        try:
+            acl = demo_principal(tenant).to_acl()
+        except RuntimeError:
+            st.error("Demo auth is disabled. Set AUTH_DEV_SIGNER_ENABLED=true and JWT_SECRET to run the demo.")
+            st.stop()
 
         t0 = time.perf_counter()
         result = pipeline.run(question, acl)

@@ -17,11 +17,25 @@ from core.types import (
     Chunk,
     GuardrailResult,
     LLMResponse,
+    Principal,
     Query,
     ChatMessage,
     ScoredChunk,
     Vector,
 )
+
+
+class AuthError(Exception):
+    """Raised by an AuthVerifier when a token cannot be trusted.
+
+    `status` is the HTTP status the API layer should surface: 401 (unauthenticated)
+    or 403 (authenticated but no valid tenant / over-scoped token).
+    """
+
+    def __init__(self, detail: str, status: int = 401) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.status = status
 
 
 @runtime_checkable
@@ -95,3 +109,19 @@ class Guardrail(Protocol):
     def name(self) -> str: ...
 
     def check(self, text: str, *, context: dict | None = None) -> GuardrailResult: ...
+
+
+@runtime_checkable
+class AuthVerifier(Protocol):
+    """Turns a bearer token into a verified Principal. Raises AuthError on ANY
+    failure — implementations must fail closed."""
+
+    def verify(self, token: str) -> Principal: ...
+
+
+@runtime_checkable
+class TenantAllowlist(Protocol):
+    """Per-tenant permitted acl_tags. `allowed()` returns None when unrestricted
+    (claims pass through), else the frozenset of tags the tenant may hold."""
+
+    def allowed(self, tenant_id: str) -> frozenset[str] | None: ...

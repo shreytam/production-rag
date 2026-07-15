@@ -11,7 +11,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Vector = list[float]
 
@@ -27,6 +27,13 @@ class ACLContext(BaseModel):
     tenant_id: str
     acl_tags: tuple[str, ...] = ()
 
+    @field_validator("tenant_id")
+    @classmethod
+    def _acl_tenant_nonempty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("ACLContext.tenant_id must be non-empty")
+        return v
+
     def allows(self, owner: "ACLContext") -> bool:
         """True if a caller with THIS scope may see a chunk owned by `owner`.
 
@@ -38,6 +45,29 @@ class ACLContext(BaseModel):
         if not owner.acl_tags:
             return True
         return bool(set(self.acl_tags) & set(owner.acl_tags))
+
+
+class Principal(BaseModel):
+    """A cryptographically verified caller identity. Built ONLY from a verified
+    token's claims — never from raw request headers/body. `ACLContext` is derived
+    from this, closing the tenant-spoofing hole."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tenant_id: str
+    acl_tags: tuple[str, ...] = ()
+    subject: str = ""
+    claims: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("tenant_id")
+    @classmethod
+    def _tenant_nonempty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Principal.tenant_id must be non-empty")
+        return v
+
+    def to_acl(self) -> "ACLContext":
+        return ACLContext(tenant_id=self.tenant_id, acl_tags=self.acl_tags)
 
 
 class Document(BaseModel):

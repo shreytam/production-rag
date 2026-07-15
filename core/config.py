@@ -94,6 +94,19 @@ class Settings(BaseSettings):
     # confound metrics; groundedness adds an LLM call per item).
     guardrails_enabled: bool = True
 
+    # --- Auth & tenancy (SP1) ---
+    app_env: Literal["dev", "prod"] = "dev"
+    jwt_alg: Literal["HS256", "RS256"] = "HS256"
+    jwt_secret: str = ""          # HS256 shared secret (dev); presence enables minting
+    jwks_url: str = ""            # RS256 JWKS endpoint (prod)
+    jwt_issuer: str = ""          # enforced on prod
+    jwt_audience: str = ""        # enforced on prod
+    jwt_leeway_seconds: int = 60
+    acl_allowlist_source: str = ""  # empty = NullAllowlist; path = StaticAllowlist JSON
+    auth_dev_signer_enabled: bool = False
+    max_question_chars: int = 8000
+    max_acl_tags: int = 32
+
     # --- Observability ---
     langfuse_enabled: bool = False
     langfuse_host: str = "http://localhost:3000"
@@ -120,6 +133,20 @@ class Settings(BaseSettings):
         self.context_api_key = pick(self.context_api_key, self.context_base_url)
         self.judge_api_key = pick(self.judge_api_key, self.judge_base_url)
         self.reranker_nim_api_key = pick(self.reranker_nim_api_key, self.reranker_nim_base_url)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_auth(self) -> "Settings":
+        """Prod instances must be securely configured — fail fast at construction."""
+        if self.app_env == "prod":
+            if self.jwt_alg == "HS256" and not self.jwt_secret:
+                raise ValueError("HS256 requires jwt_secret when app_env=prod")
+            if self.jwt_alg == "RS256" and not self.jwks_url:
+                raise ValueError("RS256 requires jwks_url when app_env=prod")
+            if not self.jwt_issuer or not self.jwt_audience:
+                raise ValueError("jwt_issuer and jwt_audience are required when app_env=prod")
+            if self.auth_dev_signer_enabled:
+                raise ValueError("auth_dev_signer_enabled must be False when app_env=prod")
         return self
 
 
