@@ -501,5 +501,67 @@ def test_generator_fallback_has_empty_claimed_markers():
     assert ans.metadata["valid_markers"] == [1]
 
 
+def test_citation_blocks_claimed_phantom():
+    from core.types import Citation, GuardrailAction
+    from guardrails.citation_enforcement import CitationGuardrail
+
+    def _answer(valid, claimed, citations, text="answer [1]", refused=False):
+        a = Answer(text=text, citations=citations, refused=refused)
+        a.metadata["valid_markers"] = valid
+        a.metadata["claimed_markers"] = claimed
+        return a
+
+    def _check(ans, ctx_ids={"c1"}):
+        return CitationGuardrail().check(ans.text, context={"answer": ans, "context_chunk_ids": ctx_ids})
+
+    cit = [Citation(marker="[1]", chunk_id="c1", doc_id="d1")]
+    assert _check(_answer([1], [1, 99], cit)).action == GuardrailAction.BLOCK
+
+
+def test_citation_passes_valid_claims():
+    from core.types import Citation, GuardrailAction
+    from guardrails.citation_enforcement import CitationGuardrail
+
+    def _answer(valid, claimed, citations, text="answer [1]", refused=False):
+        a = Answer(text=text, citations=citations, refused=refused)
+        a.metadata["valid_markers"] = valid
+        a.metadata["claimed_markers"] = claimed
+        return a
+
+    def _check(ans, ctx_ids={"c1"}):
+        return CitationGuardrail().check(ans.text, context={"answer": ans, "context_chunk_ids": ctx_ids})
+
+    cit = [Citation(marker="[1]", chunk_id="c1", doc_id="d1")]
+    assert _check(_answer([1, 2], [1], cit)).action == GuardrailAction.PASS
+
+
+def test_citation_ignores_bracketed_prose_not_claimed():
+    from core.types import Citation, GuardrailAction
+    from guardrails.citation_enforcement import CitationGuardrail
+
+    def _answer(valid, claimed, citations, text="answer [1]", refused=False):
+        a = Answer(text=text, citations=citations, refused=refused)
+        a.metadata["valid_markers"] = valid
+        a.metadata["claimed_markers"] = claimed
+        return a
+
+    def _check(ans, ctx_ids={"c1"}):
+        return CitationGuardrail().check(ans.text, context={"answer": ans, "context_chunk_ids": ctx_ids})
+
+    cit = [Citation(marker="[1]", chunk_id="c1", doc_id="d1")]
+    ans = _answer([1], [1], cit, text="In [2020] revenue rose [1]; see arr[0].")
+    assert _check(ans).action == GuardrailAction.PASS
+
+
+def test_citation_skips_phantom_check_when_markers_absent():
+    from core.types import Citation, GuardrailAction
+    from guardrails.citation_enforcement import CitationGuardrail
+    cit = [Citation(marker="[1]", chunk_id="c1", doc_id="d1")]
+    a = Answer(text="answer [1]", citations=cit)  # directly constructed, no marker metadata
+    res = CitationGuardrail().check(a.text, context={"answer": a, "context_chunk_ids": {"c1"}})
+    assert res.action == GuardrailAction.PASS
+
+
+
 
 
