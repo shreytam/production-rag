@@ -14,15 +14,15 @@ import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector
 
+from core.config import Settings
+from core.types import ACLContext, Chunk, RetrievalSource, ScoredChunk, Vector
+from retrieval.acl import pg_where
+
 
 def _as_vector(embedding: Vector) -> "np.ndarray":
     """pgvector's psycopg dumper adapts numpy arrays to the `vector` type; a plain
     Python list would be sent as `double precision[]` and fail the `<=>` operator."""
     return np.asarray(embedding, dtype=np.float32)
-
-from core.config import Settings
-from core.types import ACLContext, Chunk, RetrievalSource, ScoredChunk, Vector
-from retrieval.acl import pg_where
 
 
 def _connect(dsn: str) -> psycopg.Connection:

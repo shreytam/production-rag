@@ -6,7 +6,6 @@ import json
 import types
 from unittest.mock import MagicMock, patch
 
-import pytest
 from pydantic import BaseModel
 
 from core.config import Settings

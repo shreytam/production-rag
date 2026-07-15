@@ -41,7 +41,7 @@ def test_prod_valid_config_constructs():
 
 
 from core.types import ACLContext, Principal
-from core.interfaces import AuthError, AuthVerifier, TenantAllowlist
+from core.interfaces import AuthError
 
 
 def test_principal_to_acl_maps_tenant_and_tags():

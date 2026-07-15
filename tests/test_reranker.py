@@ -5,7 +5,6 @@ No model downloads. No network calls.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
