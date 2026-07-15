@@ -133,7 +133,7 @@ def default_runner(generator: Generator | None = None) -> GuardrailRunner:
 
     s = get_settings()
     input_guards: list[Guardrail] = [
-        InjectionGuardrail(generator=generator),  # type: ignore[arg-type]
+        InjectionGuardrail(generator=generator, llm_escalation=s.injection_llm_escalation),  # type: ignore[arg-type]
         PIIGuardrail(),
     ]
 
