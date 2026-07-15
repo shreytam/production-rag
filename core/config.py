@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # confound metrics; groundedness adds an LLM call per item).
     guardrails_enabled: bool = True
 
+    # SP2 guardrail-correctness knobs
+    injection_llm_escalation: bool = True       # borderline input → 1 LLM classifier call
+    groundedness_timeout_seconds: float = 20.0  # wall-clock bound on the faithfulness call
+
     # --- Auth & tenancy (SP1) ---
     app_env: Literal["dev", "prod"] = "dev"
     jwt_alg: Literal["HS256", "RS256"] = "HS256"

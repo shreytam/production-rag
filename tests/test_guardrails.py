@@ -393,3 +393,11 @@ def test_runner_default_factory_with_groundedness():
     assert len(results) > 0
     for r in results:
         assert "latency_ms" in r.metadata
+
+
+def test_sp2_guardrail_config_defaults():
+    from core.config import Settings
+    s = Settings()
+    assert s.injection_llm_escalation is True
+    assert s.groundedness_timeout_seconds == 20.0
+
