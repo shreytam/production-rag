@@ -13,10 +13,6 @@ import pickle
 from pathlib import Path
 from typing import Any
 
-from guardrails.input_injection import scan_for_injection
-
-logger = logging.getLogger(__name__)
-
 from core.config import Settings, get_settings
 from core.registry import (
     build_embedder,
@@ -27,10 +23,13 @@ from core.registry import (
 )
 from core.types import ACLContext, Answer, Query
 from generation.grounded_generator import GroundedGenerator
+from guardrails.input_injection import scan_for_injection
 from guardrails.runner import GuardrailRunner, default_runner
 from observability.cost import cost_usd
 from observability.langfuse_tracing import Tracer, timed
 from retrieval.hybrid import DenseRetriever, HybridRetriever
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TENANT = "public"
 

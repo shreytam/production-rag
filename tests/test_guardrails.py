@@ -363,7 +363,6 @@ def test_runner_default_factory_no_generator():
 
 def test_runner_default_factory_with_groundedness():
     from guardrails.runner import default_runner
-    from guardrails.output_groundedness import GroundednessGuardrail
 
     # Build a fake generator that covers citation check (no LLM calls needed for citation)
     # plus the two groundedness calls.
@@ -629,7 +628,7 @@ def test_scan_for_injection_returns_strong_labels():
 def test_output_block_suppresses_content_and_metadata():
     from core.config import get_settings
     from core.pipeline import OUTPUT_BLOCK_MESSAGE, RAGPipeline
-    from core.types import ACLContext, GuardrailResult, Chunk, ScoredChunk, GuardrailAction, Answer
+    from core.types import ACLContext, GuardrailResult, Chunk, ScoredChunk, GuardrailAction
     from guardrails.runner import GuardrailRunner
     from generation.grounded_generator import GroundedGenerator
     from tests._fakes import RecordingGenerator
