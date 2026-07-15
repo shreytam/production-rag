@@ -20,6 +20,7 @@ from pathlib import Path
 
 from core.interfaces import Generator
 from core.types import ChatMessage, Chunk
+from core.config import Settings, get_settings
 
 
 _SYSTEM_PROMPT = (
@@ -68,9 +69,14 @@ class ContextualPrefixer:
         self,
         generator: Generator,
         cache_dir: str | Path = ".cache/contextual",
+        settings: Settings | None = None,
     ) -> None:
         self._gen = generator
-        self._cache_dir = Path(cache_dir)
+        self.settings = settings or get_settings()
+        
+        # Append namespace suffix to segment cache runs
+        namespace = f"{self.settings.pii_mode}"
+        self._cache_dir = Path(cache_dir) / namespace
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def prefix_for(
@@ -103,6 +109,13 @@ class ContextualPrefixer:
         ]
         response = self._gen.complete(messages, max_tokens=128, temperature=0.0)
         prefix = response.text.strip()
+
+        # Post-scan defense-in-depth: if redact mode is active, block PII hallucinated by LLM
+        if self.settings.pii_mode == "redact":
+            from core.registry import build_pii_detector
+            from ingest.pii import redact
+            spans = build_pii_detector(self.settings).detect(prefix)
+            prefix = redact(prefix, spans)
 
         cache_file.write_text(
             json.dumps({"prefix": prefix, "doc_id": doc_id}, ensure_ascii=False),

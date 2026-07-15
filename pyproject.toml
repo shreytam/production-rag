@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 eval = ["datasets>=2.20", "scipy>=1.13", "pandas>=2.2"]
+pii-ner = ["presidio-analyzer>=2.2", "spacy>=3.7"]
 rerank-local = ["sentence-transformers>=3.0"]
 app = ["fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37", "pyjwt[crypto]>=2.9"]
 obs = ["langfuse>=4"]

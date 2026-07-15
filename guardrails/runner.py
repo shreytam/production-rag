@@ -119,19 +119,22 @@ class GuardrailRunner:
         return result
 
 
-def default_runner(generator: Generator | None = None) -> GuardrailRunner:
+def default_runner(
+    generator: Generator | None = None,
+    settings: Settings | None = None,
+) -> GuardrailRunner:
     """Factory that wires sensible defaults for a production pipeline.
 
     GroundednessGuardrail is omitted when *generator* is None (offline /
     testing scenarios where no LLM is available).
     """
-    from core.config import get_settings
+    from core.config import get_settings, Settings
     from guardrails.input_injection import InjectionGuardrail
     from guardrails.pii_guard import PIIGuardrail
     from guardrails.citation_enforcement import CitationGuardrail
     from guardrails.schema_validation import SchemaGuardrail
 
-    s = get_settings()
+    s = settings or get_settings()
     input_guards: list[Guardrail] = [
         InjectionGuardrail(generator=generator, llm_escalation=s.injection_llm_escalation),  # type: ignore[arg-type]
         PIIGuardrail(),
@@ -141,6 +144,9 @@ def default_runner(generator: Generator | None = None) -> GuardrailRunner:
         CitationGuardrail(),
         SchemaGuardrail(),
     ]
+
+    if s.pii_scan_output:
+        output_guards.append(PIIGuardrail())
 
     if generator is not None:
         from guardrails.output_groundedness import GroundednessGuardrail
