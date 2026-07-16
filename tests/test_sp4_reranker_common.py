@@ -1,12 +1,16 @@
 import pytest
-from providers.rerankers._common import min_max_normalize
+from core.types import Chunk, ScoredChunk, RetrievalSource
+from providers.rerankers._common import normalize_candidates
 
-def test_min_max_normalize():
-    # Test typical scores
-    assert min_max_normalize([1.0, 2.0, 3.0]) == [0.0, 0.5, 1.0]
+def test_normalize_candidates_drops_bounds_failures():
+    c1 = Chunk(chunk_id="c_1", doc_id="d1", text="a", tenant_id="t")
+    sc1 = ScoredChunk(chunk=c1, score=0.5)
 
-    # Test identical scores (division by zero hazard)
-    assert min_max_normalize([2.5, 2.5, 2.5]) == [1.0, 1.0, 1.0]
+    # Index 2 is out of range (only len=1)
+    scored = [(2, 0.9), (0, 0.8)]
+    clean = normalize_candidates([sc1], scored, top_n=2)
 
-    # Test empty list (should gracefully return empty list)
-    assert min_max_normalize([]) == []
+    assert len(clean) == 1
+    assert clean[0].chunk_id == "c_1"
+    assert clean[0].score == 0.8
+    assert clean[0].source == RetrievalSource.RERANK
