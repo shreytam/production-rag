@@ -163,7 +163,7 @@ def evaluate_item(
 # ---------------------------------------------------------------------------
 
 
-def aggregate_results(items: list[dict]) -> dict:
+def aggregate_results(items: list[dict], bootstrap_resamples: int = 1000) -> dict:
     """Compute mean + bootstrap CI for every numeric metric."""
     has_judge = items[0].get("judge") is not None
     metric_keys = (
@@ -186,7 +186,7 @@ def aggregate_results(items: list[dict]) -> dict:
     aggregates: dict[str, dict] = {}
     for key in metric_keys:
         vals = _collect(key)
-        mean, lo, hi = bootstrap_ci(vals)
+        mean, lo, hi = bootstrap_ci(vals, n=bootstrap_resamples)
         aggregates[key] = {"mean": mean, "ci_lo": lo, "ci_hi": hi}
     return aggregates
 
@@ -246,7 +246,7 @@ def run_eval(
             f"(recall@5={evaluated[-1]['retrieval_metrics']['recall_at_5']:.2f})",
             flush=True,
         )
-    aggregates = aggregate_results(evaluated)
+    aggregates = aggregate_results(evaluated, bootstrap_resamples=settings.eval_bootstrap_resamples)
 
     output = {
         "dataset": dataset,

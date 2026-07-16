@@ -3,7 +3,7 @@
 Usage::
 
     python -m eval.compare --dataset squad_dev --base baseline --new full
-    python -m eval.compare --dataset squad_dev --base baseline --new full --tolerance 0.02
+    python -m eval.compare --dataset squad_dev --base baseline --new full --tolerance 0.03
     python -m eval.compare --dataset squad_dev --baseline-file eval/baselines/squad_dev.json --new full
 
 Prints a fixed-width metrics table (base / new / delta / CI) and exits nonzero
@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import math
+from core.config import get_settings
 from eval.stats import paired_bootstrap
 
 RUNS_DIR = Path(__file__).parent / "runs"
@@ -64,10 +65,14 @@ def compare(
     dataset: str,
     base_version: str | None = None,
     new_version: str = "full",
-    tolerance: float = 0.02,
+    tolerance: float | None = None,
     baseline_file: Path | None = None,
 ) -> bool:
     """Compare two runs and return True if all metrics pass the gate."""
+    settings = get_settings()
+    if tolerance is None:
+        tolerance = settings.eval_tolerance
+
     if baseline_file is not None:
         base_path = baseline_file
     elif base_version is not None:
@@ -131,7 +136,7 @@ def compare(
             lo = hi = float("nan")
         else:
             # Run paired bootstrap
-            _, lo, hi = paired_bootstrap(base_items, new_items)
+            _, lo, hi = paired_bootstrap(base_items, new_items, n=settings.eval_bootstrap_resamples)
 
             # Gating Rule: fail if statistically significant regression
             if math.isnan(lo) or math.isnan(hi):
@@ -165,7 +170,12 @@ def main() -> None:
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--base", default=None, help="Base version name (e.g. 'baseline')")
     parser.add_argument("--new", default="full", help="New version name (e.g. 'full')")
-    parser.add_argument("--tolerance", type=float, default=0.02)
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=None,
+        help="Regression tolerance (defaults to Settings.eval_tolerance)",
+    )
     parser.add_argument(
         "--baseline-file",
         type=Path,
