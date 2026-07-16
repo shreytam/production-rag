@@ -39,6 +39,8 @@ def holistic_judge(
     answer: str,
     contexts: list[str],
     generator: Generator,
+    votes: int = 1,
+    base_seed: int = 0,
 ) -> dict:
     """Evaluate an answer holistically using an LLM judge.
 
@@ -52,6 +54,10 @@ def holistic_judge(
         The retrieved context chunks that were provided to the generator.
     generator:
         An injected ``Generator`` instance (use a fake in tests).
+    votes:
+        The number of judge votes to collect.
+    base_seed:
+        The base seed for random number generation in the LLM.
 
     Returns
     -------
@@ -59,25 +65,33 @@ def holistic_judge(
     """
     context_block = "\n\n".join(f"[{i+1}] {c}" for i, c in enumerate(contexts))
 
-    resp = generator.complete(
-        [
-            ChatMessage(role="system", content=RUBRIC),
-            ChatMessage(
-                role="user",
-                content=(
-                    f"Question: {question}\n\n"
-                    f"Contexts:\n{context_block}\n\n"
-                    f"Answer: {answer}\n\n"
-                    "Provide your evaluation."
+    results = []
+    # Collect votes
+    for i in range(votes):
+        resp = generator.complete(
+            [
+                ChatMessage(role="system", content=RUBRIC),
+                ChatMessage(
+                    role="user",
+                    content=(
+                        f"Question: {question}\n\n"
+                        f"Contexts:\n{context_block}\n\n"
+                        f"Answer: {answer}\n\n"
+                        "Provide your evaluation."
+                    ),
                 ),
-            ),
-        ],
-        response_model=JudgeOutput,
-        max_tokens=512,
-    )
+            ],
+            response_model=JudgeOutput,
+            max_tokens=512,
+            seed=base_seed + i,
+        )
+        parsed = resp.parsed or {}
+        results.append({
+            "score": float(parsed.get("score", 0.0)),
+            "rationale": str(parsed.get("rationale", "")),
+        })
 
-    parsed = resp.parsed or {}
-    return {
-        "score": float(parsed.get("score", 0.0)),
-        "rationale": str(parsed.get("rationale", "")),
-    }
+    # Sort results by score and take the median
+    results.sort(key=lambda r: r["score"])
+    median_idx = len(results) // 2
+    return results[median_idx]
