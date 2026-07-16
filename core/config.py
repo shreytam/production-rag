@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # --- OpenAI-compatible model router (one base_url + key for all roles) ---
+    # Any model role left at the NIM default url / empty key inherits these.
+    # The reranker is intentionally excluded (no OpenAI-standard rerank endpoint).
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+
     # --- Vector store: one switch ---
     vector_store: Literal["qdrant", "pgvector"] = "qdrant"
     qdrant_url: str = "http://localhost:6333"
@@ -153,6 +159,22 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("rag_require_live_stores", "require_live_stores")
     )
+
+    @model_validator(mode="after")
+    def _apply_llm_router(self) -> "Settings":
+        """Point every model role at one OpenAI-compatible router unless the role
+        was explicitly overridden. A role url still at the NIM default, or a role
+        with an empty base url, adopts llm_base_url; empty role keys adopt
+        llm_api_key. The reranker is deliberately not routed."""
+        if self.llm_base_url:
+            for field in ("embed_base_url", "gen_base_url", "context_base_url", "judge_base_url"):
+                if getattr(self, field) in ("", NIM_BASE_URL):
+                    setattr(self, field, self.llm_base_url)
+        if self.llm_api_key:
+            for field in ("embed_api_key", "gen_api_key", "context_api_key", "judge_api_key"):
+                if not getattr(self, field):
+                    setattr(self, field, self.llm_api_key)
+        return self
 
     @model_validator(mode="after")
     def _fill_key_fallbacks(self) -> "Settings":
