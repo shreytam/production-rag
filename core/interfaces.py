@@ -63,6 +63,10 @@ class VectorStore(Protocol):
 
     def count(self, acl: ACLContext | None = None) -> int: ...
 
+    def delete(self, chunk_ids: list[str], acl: ACLContext) -> None: ...
+
+    def update_metadata(self, updates: dict[str, dict], acl: ACLContext) -> None: ...
+
 
 @runtime_checkable
 class SparseRetriever(Protocol):

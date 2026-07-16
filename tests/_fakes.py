@@ -62,6 +62,21 @@ class InMemoryVectorStore:
     def count(self, acl=None):
         return len(self.chunks)
 
+    def delete(self, chunk_ids, acl):
+        wanted = set(chunk_ids)
+        self.chunks = [
+            c for c in self.chunks
+            if not (c.chunk_id in wanted and c.tenant_id == acl.tenant_id)
+        ]
+
+    def update_metadata(self, updates, acl):
+        for c in self.chunks:
+            if c.tenant_id != acl.tenant_id:
+                continue
+            payload = updates.get(c.chunk_id)
+            if payload and "title" in payload:
+                c.title = payload["title"]
+
 
 class FakeReranker:
     def rerank(self, query, chunks, top_n):
