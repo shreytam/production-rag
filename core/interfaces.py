@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from core.types import (
     ACLContext,
     Chunk,
+    DocManifest,
     GuardrailResult,
     LLMResponse,
     Principal,
@@ -144,4 +145,11 @@ class SparseIndexLoader(Protocol):
     """Loads a persisted sparse index from disk."""
 
     def load(self, corpus: str, store: str) -> SparseRetriever | None: ...
+
+
+@runtime_checkable
+class ManifestStore(Protocol):
+    def load(self, tenant_id: str, doc_id: str) -> "DocManifest | None": ...
+    def save(self, manifest: "DocManifest") -> None: ...
+    def delete(self, tenant_id: str, doc_id: str) -> None: ...
 

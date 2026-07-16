@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     # --- Ingest sizing (keep corpora small to respect NIM rate limits) ---
     max_chunks_per_corpus: int = 2000
     contextual_cache_dir: str = ".cache/contextual"
+    manifest_dir: str = ".cache/manifest"
 
     # --- Eval Gate & Stats ---
     eval_tolerance: float = 0.03

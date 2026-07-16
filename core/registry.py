@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Literal
 
 from core.config import Settings, get_settings
-from core.interfaces import Embedder, Generator, Reranker, SparseRetriever, VectorStore, PIIDetector
+from core.interfaces import Embedder, Generator, ManifestStore, Reranker, SparseRetriever, VectorStore, PIIDetector
 
 GeneratorRole = Literal["gen", "context", "judge"]
 
@@ -145,4 +145,11 @@ def build_pii_detector(settings: Settings | None = None) -> PIIDetector:
         from providers.pii.presidio_detector import PresidioPIIDetector
         return PresidioPIIDetector()
     raise ValueError(f"Unknown pii_detector configured: {s.pii_detector}")
+
+
+def build_manifest_store(settings: Settings | None = None) -> ManifestStore:
+    s = settings or get_settings()
+    from providers.manifest.jsonl_store import JsonlManifestStore
+
+    return JsonlManifestStore(manifest_dir=s.manifest_dir)
 
