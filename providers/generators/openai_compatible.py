@@ -42,6 +42,7 @@ class OpenAICompatibleGenerator:
         response_model: type[BaseModel] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        seed: int | None = None,
     ) -> LLMResponse:
         openai_messages = [{"role": m.role, "content": m.content} for m in messages]
 
@@ -51,6 +52,8 @@ class OpenAICompatibleGenerator:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if seed is not None:
+            kwargs["seed"] = seed
 
         if response_model is not None:
             schema = response_model.model_json_schema()

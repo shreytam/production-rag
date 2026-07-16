@@ -99,6 +99,7 @@ class Generator(Protocol):
         response_model: type[BaseModel] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        seed: int | None = None,
     ) -> LLMResponse: ...
 
 
