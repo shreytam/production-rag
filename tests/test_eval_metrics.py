@@ -46,20 +46,29 @@ class FakeGenerator:
 class FakeEmbedder:
     """Embedder returning canned vectors.
 
-    ``query_vec`` is returned for ``embed_query``.
-    ``doc_vecs`` is cycled for each ``embed_documents`` call.
+    ``query_vec`` is returned for ``embed_query`` (first call).
+    ``doc_vecs`` is cycled for subsequent ``embed_query`` calls (matching generated questions).
     """
 
     def __init__(self, query_vec: list[float], doc_vecs: list[list[float]]) -> None:
         self._query_vec = query_vec
         self._doc_vecs = doc_vecs
+        self._query_count = 0
 
     @property
     def dimension(self) -> int:
         return len(self._query_vec)
 
     def embed_query(self, text: str) -> list[float]:
-        return self._query_vec
+        if self._query_count == 0:
+            self._query_count += 1
+            return self._query_vec
+        # Cycle through doc_vecs for generated questions
+        if not self._doc_vecs:
+            return self._query_vec
+        idx = (self._query_count - 1) % len(self._doc_vecs)
+        self._query_count += 1
+        return self._doc_vecs[idx]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self._doc_vecs[: len(texts)]

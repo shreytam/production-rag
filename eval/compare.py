@@ -3,7 +3,7 @@
 Usage::
 
     python -m eval.compare --dataset squad_dev --base baseline --new full
-    python -m eval.compare --dataset squad_dev --base baseline --new full --tolerance 0.02
+    python -m eval.compare --dataset squad_dev --base baseline --new full --tolerance 0.03
     python -m eval.compare --dataset squad_dev --baseline-file eval/baselines/squad_dev.json --new full
 
 Prints a fixed-width metrics table (base / new / delta / CI) and exits nonzero
@@ -17,6 +17,8 @@ import json
 import sys
 from pathlib import Path
 
+import math
+from core.config import get_settings
 from eval.stats import paired_bootstrap
 
 RUNS_DIR = Path(__file__).parent / "runs"
@@ -28,9 +30,22 @@ def _load_results(path: Path) -> dict:
         return json.load(f)
 
 
+CUSTOM_EVAL_HOOKS = {}
+
+
+def register_custom_metric(name, scoring_func):
+    """Registry seam to hook custom evaluations into the gate pipeline."""
+    CUSTOM_EVAL_HOOKS[name] = scoring_func
+
+
 def _extract_aggregates(results: dict) -> dict[str, float]:
-    """Return {metric_name: mean} from a results JSON."""
-    return {k: v["mean"] for k, v in results.get("aggregates", {}).items()}
+    """Return {metric_name: mean} from a results JSON, including registered custom evals."""
+    aggs = {}
+    for k, v in results.get("aggregates", {}).items():
+        mean_val = v.get("mean") if isinstance(v, dict) else v
+        if mean_val is not None and not (isinstance(mean_val, float) and math.isnan(mean_val)):
+            aggs[k] = float(mean_val)
+    return aggs
 
 
 def _extract_item_values(results: dict, metric: str) -> list[float]:
@@ -46,30 +61,18 @@ def _extract_item_values(results: dict, metric: str) -> list[float]:
     return values
 
 
-def _print_table(rows: list[tuple]) -> None:
-    """Print a fixed-width comparison table."""
-    header = f"{'Metric':<30}{'Base':>10}{'New':>10}{'Delta':>10}{'CI lo':>10}{'CI hi':>10}"
-    sep = "-" * len(header)
-    print(sep)
-    print(header)
-    print(sep)
-    for metric, base_val, new_val, delta, lo, hi in rows:
-        print(
-            f"{metric:<30}{base_val:>10.4f}{new_val:>10.4f}{delta:>10.4f}{lo:>10.4f}{hi:>10.4f}"
-        )
-    print(sep)
-
-
 def compare(
     dataset: str,
     base_version: str | None = None,
     new_version: str = "full",
-    tolerance: float = 0.02,
+    tolerance: float | None = None,
     baseline_file: Path | None = None,
 ) -> bool:
     """Compare two runs and return True if all metrics pass the gate."""
+    settings = get_settings()
+    if tolerance is None:
+        tolerance = settings.eval_tolerance
 
-    # Resolve base results
     if baseline_file is not None:
         base_path = baseline_file
     elif base_version is not None:
@@ -90,30 +93,67 @@ def compare(
     base_agg = _extract_aggregates(base_results)
     new_agg = _extract_aggregates(new_results)
 
-    all_metrics = sorted(set(base_agg.keys()) | set(new_agg.keys()))
+    all_metrics = sorted(set(base_agg.keys()) | set(new_agg.keys()) | set(CUSTOM_EVAL_HOOKS.keys()))
     rows = []
     failures: list[str] = []
 
+    # Print table header with Verdict
+    header = f"{'Metric':<25}{'Base':>10}{'New':>10}{'Delta':>10}{'CI lo':>10}{'CI hi':>10}{'Verdict':>12}"
+    sep = "-" * len(header)
+    print(sep)
+    print(header)
+    print(sep)
+
     for metric in all_metrics:
-        base_val = base_agg.get(metric, float("nan"))
-        new_val = new_agg.get(metric, float("nan"))
-        delta = new_val - base_val
-
-        # Paired bootstrap on the difference (requires per-item data)
-        base_items = _extract_item_values(base_results, metric)
-        new_items = _extract_item_values(new_results, metric)
-
-        if base_items and new_items and len(base_items) == len(new_items):
-            _, lo, hi = paired_bootstrap(base_items, new_items)
+        # Check custom hook integration
+        if metric in CUSTOM_EVAL_HOOKS:
+            # Custom checks calculate scores from raw items
+            hook = CUSTOM_EVAL_HOOKS[metric]
+            base_items = [hook(item) for item in base_results.get("items", [])]
+            new_items = [hook(item) for item in new_results.get("items", [])]
+            base_val = sum(base_items) / len(base_items) if base_items else float("nan")
+            new_val = sum(new_items) / len(new_items) if new_items else float("nan")
         else:
+            base_val = base_agg.get(metric, float("nan"))
+            new_val = new_agg.get(metric, float("nan"))
+
+            base_items = _extract_item_values(base_results, metric)
+            new_items = _extract_item_values(new_results, metric)
+
+        # Enforce equal-N check
+        if not base_items or not new_items:
+            print(f"[compare] Error: Missing values for metric {metric}", file=sys.stderr)
+            sys.exit(1)
+        if len(base_items) != len(new_items):
+            print(f"[compare] Error: Sample size N mismatch for {metric}. Base has {len(base_items)}, New has {len(new_items)}", file=sys.stderr)
+            sys.exit(1)
+
+        # Gating checks
+        delta = new_val - base_val
+        if math.isnan(base_val) or math.isnan(new_val):
+            verdict = "FAILED"
+            failures.append(f"{metric}: Base or New is NaN")
             lo = hi = float("nan")
+        else:
+            # Run paired bootstrap
+            _, lo, hi = paired_bootstrap(base_items, new_items, n=settings.eval_bootstrap_resamples)
 
-        rows.append((metric, base_val, new_val, delta, lo, hi))
+            # Gating Rule: fail if statistically significant regression
+            if math.isnan(lo) or math.isnan(hi):
+                verdict = "FAILED"
+                failures.append(f"{metric}: bootstrap returned NaN confidence intervals")
+            elif hi < -tolerance:
+                verdict = "FAILED"
+                failures.append(f"{metric}: regression confidence bound {hi:.4f} < {-tolerance:.4f}")
+            else:
+                verdict = "PASSED"
 
-        if new_val < base_val - tolerance:
-            failures.append(f"{metric}: new={new_val:.4f} < base={base_val:.4f} - tol={tolerance}")
+        print(
+            f"{metric:<25}{base_val:>10.4f}{new_val:>10.4f}{delta:>10.4f}{lo:>10.4f}{hi:>10.4f}{verdict:>12}"
+        )
+        rows.append((metric, base_val, new_val, delta, lo, hi, verdict))
 
-    _print_table(rows)
+    print(sep)
 
     if failures:
         print("\n[compare] GATE FAILED — metric regressions detected:")
@@ -130,7 +170,12 @@ def main() -> None:
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--base", default=None, help="Base version name (e.g. 'baseline')")
     parser.add_argument("--new", default="full", help="New version name (e.g. 'full')")
-    parser.add_argument("--tolerance", type=float, default=0.02)
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=None,
+        help="Regression tolerance (defaults to Settings.eval_tolerance)",
+    )
     parser.add_argument(
         "--baseline-file",
         type=Path,

@@ -91,9 +91,11 @@ class RecordingGenerator:
         self._text = text
         self._parsed = parsed
         self.calls: list[list[ChatMessage]] = []
+        self.last_seed = None
 
-    def complete(self, messages, *, response_model=None, **_):
+    def complete(self, messages, *, response_model=None, seed=None, **_):
         self.calls.append(list(messages))
+        self.last_seed = seed
         return LLMResponse(
             text=self._text,
             parsed=self._parsed if response_model else None,

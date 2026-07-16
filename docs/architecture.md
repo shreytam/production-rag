@@ -292,8 +292,7 @@ To generate it:
 ```bash
 # With the stack running and NVIDIA_API_KEY set:
 uv run python -m ingest.run --dataset hotpotqa --limit 50
-uv run python -m eval.run_eval --dataset hotpotqa --version full --fast
-cp eval/runs/hotpotqa.full.results.json eval/baselines/hotpotqa.json
+make baseline DATASET=hotpotqa
 git add eval/baselines/hotpotqa.json
 git commit -m "eval: commit hotpotqa baseline (limit=50, fast)"
 ```

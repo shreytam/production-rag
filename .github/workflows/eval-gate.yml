@@ -1,8 +1,9 @@
 # CI pipeline for Production RAG
 #
-# Two jobs:
-#   lint   — offline: ruff + pytest (no secrets, no services required)
-#   eval   — online:  ingest → eval → compare against committed baseline
+# Three jobs:
+#   lint           — offline: ruff + pytest (no secrets, no services required)
+#   acl-isolation  — online: pgvector/qdrant service containers for tenant security tests
+#   eval           — online: ingest → eval → compare against committed baseline
 #
 # REQUIRED SECRET: Set `NVIDIA_API_KEY` in repo Settings → Secrets → Actions.
 # The eval job will fail without it.  The lint job runs unconditionally.
@@ -47,11 +48,57 @@ jobs:
         run: uv run pytest -q
 
   # ---------------------------------------------------------------------------
-  # Job 2: eval gate — requires NVIDIA_API_KEY and the Qdrant service
+  # Job 2: acl-isolation — pgvector and qdrant security test suite
+  # ---------------------------------------------------------------------------
+  acl-isolation:
+    name: Live Database ACL Isolation Tests
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: rag
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run live database isolation checks
+        env:
+          RAG_REQUIRE_LIVE_STORES: "1"
+          VECTOR_STORE: "qdrant"
+          PG_DSN: "postgresql://rag:rag@localhost:5432/rag"
+          QDRANT_URL: "http://localhost:6333"
+        run: |
+          uv run pytest tests/test_stores_acl.py tests/test_multitenant_isolation.py -v
+
+  # ---------------------------------------------------------------------------
+  # Job 3: eval gate — requires NVIDIA_API_KEY and the Qdrant service
   # ---------------------------------------------------------------------------
   eval:
     name: Eval Gate (hotpotqa / full pipeline)
     runs-on: ubuntu-latest
+    if: github.repository == 'ShreytamGoyal/production-rag' && secrets.NVIDIA_API_KEY != ''
 
     # Qdrant service container — CI uses VECTOR_STORE=qdrant (the default)
     services:
@@ -157,3 +204,55 @@ jobs:
             --new full \
             --baseline-file eval/baselines/hotpotqa.json \
             --tolerance 0.03
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Status Gate required check
+  # ---------------------------------------------------------------------------
+  eval-gate-status:
+    name: Gated Status Check
+    runs-on: ubuntu-latest
+    needs: [lint, acl-isolation, eval]
+    if: always()
+    steps:
+      - name: Check overall gate status
+        env:
+          LINT_STATUS: ${{ needs.lint.result }}
+          ACL_STATUS: ${{ needs.acl-isolation.result }}
+          EVAL_STATUS: ${{ needs.eval.result }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          echo "Lint job status: $LINT_STATUS"
+          echo "ACL job status: $ACL_STATUS"
+          echo "Eval job status: $EVAL_STATUS"
+
+          # 1. Lint or ACL-isolation must never fail
+          if [ "$LINT_STATUS" = "failure" ] || [ "$LINT_STATUS" = "cancelled" ]; then
+            echo "Error: Lint & Offline Tests failed or was cancelled."
+            exit 1
+          fi
+
+          if [ "$ACL_STATUS" = "failure" ] || [ "$ACL_STATUS" = "cancelled" ]; then
+            echo "Error: Live Database ACL Isolation Tests failed or was cancelled."
+            exit 1
+          fi
+
+          # 2. Eval check
+          if [ "$EVAL_STATUS" = "success" ]; then
+            echo "Success: Eval Gate passed."
+            exit 0
+          elif [ "$EVAL_STATUS" = "failure" ] || [ "$EVAL_STATUS" = "cancelled" ]; then
+            echo "Error: Eval Gate failed or was cancelled."
+            exit 1
+          elif [ "$EVAL_STATUS" = "skipped" ]; then
+            # If skipped, check if 'eval-skip-approved' label is present in the PR
+            if echo "$PR_LABELS" | grep -q '"name":\s*"eval-skip-approved"'; then
+              echo "Passed: Eval job was skipped, and 'eval-skip-approved' label is present."
+              exit 0
+            else
+              echo "Error: Eval job was skipped due to missing secrets (e.g. fork PR), but no 'eval-skip-approved' label was found on the PR."
+              exit 1
+            fi
+          else
+            echo "Error: Unknown eval job status: $EVAL_STATUS"
+            exit 1
+          fi

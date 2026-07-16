@@ -11,7 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import model_validator, Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
@@ -137,6 +137,22 @@ class Settings(BaseSettings):
     # --- Ingest sizing (keep corpora small to respect NIM rate limits) ---
     max_chunks_per_corpus: int = 2000
     contextual_cache_dir: str = ".cache/contextual"
+
+    # --- Eval Gate & Stats ---
+    eval_tolerance: float = 0.03
+    eval_fast_n: int = 15
+    eval_fast_seed: int = 0
+    eval_bootstrap_resamples: int = 1000
+
+    # --- LLM Judge Voting ---
+    judge_votes: int = 3
+    judge_seed: int = 0
+
+    # --- Live Store CI Gating ---
+    require_live_stores: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("rag_require_live_stores", "require_live_stores")
+    )
 
     @model_validator(mode="after")
     def _fill_key_fallbacks(self) -> "Settings":
