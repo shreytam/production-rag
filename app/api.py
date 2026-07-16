@@ -30,7 +30,7 @@ def get_pipeline():
     if _pipeline is None:
         from core.pipeline import build  # heavy import deferred intentionally
 
-        _pipeline = build(version="full", dataset=None)
+        _pipeline = build(version="full", corpus=None)
     return _pipeline
 
 

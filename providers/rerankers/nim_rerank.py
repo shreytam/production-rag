@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from core.types import RetrievalSource, ScoredChunk
+from core.types import ScoredChunk
 
 
 def _is_transient(exc: BaseException) -> bool:
@@ -71,19 +71,7 @@ class NIMReranker:
                     return float(item[key])
             return 0.0
 
-        ranked = sorted(rankings, key=_score, reverse=True)
+        from providers.rerankers._common import normalize_candidates
 
-        results: list[ScoredChunk] = []
-        for rank, item in enumerate(ranked[:top_n], start=1):
-            idx = int(item["index"])
-            if idx < 0 or idx >= len(chunks):
-                continue
-            results.append(
-                ScoredChunk(
-                    chunk=chunks[idx].chunk,
-                    score=_score(item),
-                    source=RetrievalSource.RERANK,
-                    rank=rank,
-                )
-            )
-        return results
+        scored = [(int(item["index"]), _score(item)) for item in rankings]
+        return normalize_candidates(chunks, scored, top_n)

@@ -9,8 +9,6 @@ consumes; `answer()` returns the rich `Answer` for the app/guardrails.
 from __future__ import annotations
 
 import logging
-import pickle
-from pathlib import Path
 from typing import Any
 
 from core.config import Settings, get_settings
@@ -50,14 +48,9 @@ def _dedup(ids: list[str]) -> list[str]:
     return out
 
 
-def _load_bm25(dataset: str | None, settings: Settings):
-    if not dataset:
-        return None
-    path = Path(".cache") / f"bm25_{dataset}_{settings.vector_store}.pkl"
-    if path.exists():
-        with path.open("rb") as f:
-            return pickle.load(f)
-    return None
+class HybridIndexError(Exception):
+    """Raised when hybrid retrieval is required but the sparse index is empty/missing."""
+    pass
 
 
 class RAGPipeline:
@@ -251,7 +244,7 @@ class RAGPipeline:
 
 def build(
     version: str = "full",
-    dataset: str | None = None,
+    corpus: str | None = None,
     settings: Settings | None = None,
     enable_guardrails: bool | None = None,
 ) -> RAGPipeline:
@@ -262,15 +255,33 @@ def build(
     blocking guards never confound generation metrics or add per-item LLM cost.
     """
     s = settings or get_settings()
+    resolved_corpus = corpus or s.active_corpus
     embedder = build_embedder(s)
     store = build_vector_store(s)
     generator = build_generator("gen", s)
-    grounded = GroundedGenerator(generator, token_budget=s.context_token_budget)
+    grounded = GroundedGenerator(generator, token_budget=s.context_token_budget, settings=s)
 
     if version == "baseline":
         retriever = DenseRetriever(embedder, store)
     elif version == "full":
-        sparse = _load_bm25(dataset, s) or build_sparse_retriever(s)
+        sparse = build_sparse_retriever(s, resolved_corpus)
+
+        # Check if the sparse index is empty
+        is_empty = False
+        if hasattr(sparse, "_indices"):
+            is_empty = len(getattr(sparse, "_indices", {})) == 0
+
+        if is_empty:
+            if s.hybrid_require_sparse:
+                raise HybridIndexError(
+                    f"Sparse index for corpus '{resolved_corpus}' is empty or could not be loaded, "
+                    "and hybrid_require_sparse is True."
+                )
+            else:
+                logger.warning(
+                    f"Sparse index for corpus '{resolved_corpus}' is empty or could not be loaded."
+                )
+
         reranker = build_reranker(s)
         retriever = HybridRetriever(embedder, store, sparse, reranker, rrf_k=s.rrf_k)
     else:

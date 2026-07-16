@@ -129,7 +129,7 @@ def main() -> None:
 
     # Guardrails OFF for eval (same rationale as eval/run_eval.py).
     pipeline = pipeline_mod.build(
-        version=args.version, dataset=args.dataset, enable_guardrails=False
+        version=args.version, corpus=args.dataset, enable_guardrails=False
     )
     scorer = RagasScorer()
 

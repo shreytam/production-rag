@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from core.types import RetrievalSource, ScoredChunk
+from core.types import ScoredChunk
 
 
 class LocalCrossEncoderReranker:
@@ -51,20 +51,7 @@ class LocalCrossEncoderReranker:
         scorer = self._get_scorer()
         raw_scores: list[float] = list(scorer(pairs))
 
-        scored = sorted(
-            zip(raw_scores, chunks),
-            key=lambda t: t[0],
-            reverse=True,
-        )
+        from providers.rerankers._common import normalize_candidates
 
-        results: list[ScoredChunk] = []
-        for rank, (score, sc) in enumerate(scored[:top_n], start=1):
-            results.append(
-                ScoredChunk(
-                    chunk=sc.chunk,
-                    score=float(score),
-                    source=RetrievalSource.RERANK,
-                    rank=rank,
-                )
-            )
-        return results
+        scored = list(enumerate(raw_scores))
+        return normalize_candidates(chunks, scored, top_n)
