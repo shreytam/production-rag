@@ -33,6 +33,7 @@ from eval.retrieval_metrics import mrr, ndcg_at_k, precision_at_k, recall_at_k
 from eval.stats import bootstrap_ci
 
 RUNS_DIR = Path(__file__).parent / "runs"
+BASELINES_DIR = Path(__file__).parent / "baselines"
 
 
 # ---------------------------------------------------------------------------
@@ -137,13 +138,23 @@ def evaluate_item(
     if not compute_gen:
         return out
 
+    from core.config import get_settings
+    settings = get_settings()
+
     out["generation_metrics"] = {
         "faithfulness": faithfulness(question, answer_text, context_texts, generator),
         "answer_relevancy": answer_relevancy(question, answer_text, generator, embedder),
         "context_precision": context_precision(question, answer_text, context_texts, generator),
         "context_recall": context_recall(question, ground_truth, context_texts, generator),
     }
-    out["judge"] = holistic_judge(question, answer_text, context_texts, generator)
+    out["judge"] = holistic_judge(
+        question,
+        answer_text,
+        context_texts,
+        generator,
+        votes=settings.judge_votes,
+        base_seed=settings.judge_seed,
+    )
     return out
 
 
@@ -191,9 +202,14 @@ def run_eval(
     fast: bool = False,
     limit: int | None = None,
     skip_gen_metrics: bool = False,
+    write_baseline: bool = False,
 ) -> Path:
     """Run evaluation and write results JSON.  Returns the output path."""
     from core.registry import build_embedder, build_generator
+
+    if write_baseline and not fast:
+        print("[run_eval] Error: Requires --fast option when --write-baseline is active.", file=sys.stderr)
+        sys.exit(1)
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -206,10 +222,13 @@ def run_eval(
     with dataset_path.open() as f:
         items: list[dict] = json.load(f)
 
+    from core.config import get_settings
+    settings = get_settings()
+
     if limit:
         items = items[:limit]
     if fast:
-        items = fast_subset(items, n=15)
+        items = fast_subset(items, n=settings.eval_fast_n, seed=settings.eval_fast_seed)
 
     pipeline = _build_pipeline(version, corpus=dataset)
     generator = build_generator(role="judge")
@@ -240,10 +259,15 @@ def run_eval(
         "items": evaluated,
     }
 
-    # Retrieval-only passes write a distinct artifact so a full-set retrieval run
-    # never clobbers the full-suite (RAGAS+judge) results for the same version.
-    suffix = ".retrieval" if skip_gen_metrics else ""
-    out_path = RUNS_DIR / f"{dataset}.{version}{suffix}.results.json"
+    # Resolve output path
+    BASELINES_DIR.mkdir(parents=True, exist_ok=True)
+
+    if write_baseline:
+        out_path = BASELINES_DIR / f"{dataset}.json"
+    else:
+        suffix = ".retrieval" if skip_gen_metrics else ""
+        out_path = RUNS_DIR / f"{dataset}.{version}{suffix}.results.json"
+
     with out_path.open("w") as f:
         json.dump(output, f, indent=2)
 
@@ -262,6 +286,11 @@ def main() -> None:
         action="store_true",
         help="Retrieval metrics only (skip RAGAS + judge LLM calls) — fast full-set pass",
     )
+    parser.add_argument(
+        "--write-baseline",
+        action="store_true",
+        help="Write results directly to baseline JSON path.",
+    )
     args = parser.parse_args()
 
     run_eval(
@@ -270,6 +299,7 @@ def main() -> None:
         fast=args.fast,
         limit=args.limit,
         skip_gen_metrics=args.skip_gen_metrics,
+        write_baseline=args.write_baseline,
     )
 
 
