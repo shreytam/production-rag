@@ -47,7 +47,7 @@ fmt:                ## Format
 
 .PHONY: baseline
 baseline:
-	python -m eval.run_eval --dataset $(or $(DATASET),hotpotqa) --version baseline --fast --write-baseline
+	uv run python -m eval.run_eval --dataset $(or $(DATASET),hotpotqa) --version baseline --fast --write-baseline
 
 clean:
 	rm -rf .pytest_cache .ruff_cache eval/runs
