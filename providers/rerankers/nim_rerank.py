@@ -71,17 +71,31 @@ class NIMReranker:
                     return float(item[key])
             return 0.0
 
-        ranked = sorted(rankings, key=_score, reverse=True)
+        # Build raw scores list matching input chunks order
+        raw_scores_map = {}
+        for item in rankings:
+            idx = int(item["index"])
+            raw_scores_map[idx] = _score(item)
+
+        raw_scores = []
+        for idx in range(len(chunks)):
+            raw_scores.append(raw_scores_map.get(idx, 0.0))
+
+        from providers.rerankers._common import min_max_normalize
+        normalized = min_max_normalize(raw_scores)
+
+        scored = sorted(
+            zip(normalized, chunks),
+            key=lambda t: t[0],
+            reverse=True,
+        )
 
         results: list[ScoredChunk] = []
-        for rank, item in enumerate(ranked[:top_n], start=1):
-            idx = int(item["index"])
-            if idx < 0 or idx >= len(chunks):
-                continue
+        for rank, (score, sc) in enumerate(scored[:top_n], start=1):
             results.append(
                 ScoredChunk(
-                    chunk=chunks[idx].chunk,
-                    score=_score(item),
+                    chunk=sc.chunk,
+                    score=float(score),
                     source=RetrievalSource.RERANK,
                     rank=rank,
                 )

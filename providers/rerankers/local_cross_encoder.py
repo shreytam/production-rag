@@ -51,8 +51,11 @@ class LocalCrossEncoderReranker:
         scorer = self._get_scorer()
         raw_scores: list[float] = list(scorer(pairs))
 
+        from providers.rerankers._common import min_max_normalize
+        normalized = min_max_normalize(raw_scores)
+
         scored = sorted(
-            zip(raw_scores, chunks),
+            zip(normalized, chunks),
             key=lambda t: t[0],
             reverse=True,
         )
