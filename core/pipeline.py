@@ -9,8 +9,6 @@ consumes; `answer()` returns the rich `Answer` for the app/guardrails.
 from __future__ import annotations
 
 import logging
-import pickle
-from pathlib import Path
 from typing import Any
 
 from core.config import Settings, get_settings

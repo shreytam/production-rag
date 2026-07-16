@@ -1,5 +1,3 @@
-import pytest
-from pydantic import ValidationError
 from core.config import Settings
 from core.interfaces import SparseIndexLoader
 

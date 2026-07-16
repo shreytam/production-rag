@@ -1,6 +1,4 @@
-import pytest
 from core.context_assembly import resolve_encoding
-from core.config import Settings
 
 def test_resolve_tokenizer_encoding():
     assert resolve_encoding("cl100k_base", "llama-model") == "cl100k_base"

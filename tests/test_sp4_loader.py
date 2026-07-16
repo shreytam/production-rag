@@ -1,5 +1,3 @@
-import pytest
-from pathlib import Path
 from core.registry import build_sparse_retriever
 from providers.sparse.pickle_loader import PickleSparseIndexLoader
 from providers.sparse.bm25 import BM25Retriever

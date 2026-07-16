@@ -1,4 +1,3 @@
-import pytest
 from core.types import Chunk, ScoredChunk, RetrievalSource
 from providers.rerankers._common import normalize_candidates
 

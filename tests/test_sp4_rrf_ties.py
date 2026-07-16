@@ -1,4 +1,3 @@
-import pytest
 from core.types import Chunk, ScoredChunk, RetrievalSource
 from core.rrf import reciprocal_rank_fusion
 

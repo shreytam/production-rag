@@ -1,4 +1,3 @@
-import pytest
 from core.types import Document
 from ingest.chunking import chunk_document
 
