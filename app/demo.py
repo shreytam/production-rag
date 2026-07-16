@@ -27,8 +27,8 @@ def _run_app():
     from observability.cost import cost_usd  # noqa: PLC0415
 
     @st.cache_resource(show_spinner="Loading pipeline…")
-    def _get_pipeline(version: str, dataset: str):
-        return build(version=version, dataset=dataset or None)
+    def _get_pipeline(version: str, corpus: str):
+        return build(version=version, corpus=corpus or None)
 
     # ------------------------------------------------------------------
     # Sidebar controls
@@ -41,7 +41,7 @@ def _run_app():
         index=0,
     )
     version = st.sidebar.radio("Pipeline version", ["baseline", "full"], index=1)
-    dataset = st.sidebar.text_input("Dataset (blank = default)", value="")
+    corpus = st.sidebar.text_input("Dataset (blank = default)", value="")
 
     # ------------------------------------------------------------------
     # Main panel
@@ -56,7 +56,7 @@ def _run_app():
     question = st.text_area("Your question", height=100)
 
     if st.button("Submit") and question.strip():
-        pipeline = _get_pipeline(version, dataset)
+        pipeline = _get_pipeline(version, corpus)
 
         from app.auth import demo_principal  # noqa: PLC0415
 

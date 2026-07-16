@@ -67,13 +67,13 @@ def _model_versions(generator: Any, embedder: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _build_pipeline(version: str, dataset: str | None = None) -> Any:
+def _build_pipeline(version: str, corpus: str | None = None) -> Any:
     """Build the pipeline for the given version, tolerating missing module."""
     try:
         import core.pipeline as pipeline_mod  # noqa: F401 – built by another workstream
         # Guardrails OFF for eval: CitationGuardrail/SchemaGuardrail would BLOCK
         # normal answers (confounding metrics) and groundedness adds an LLM call.
-        return pipeline_mod.build(version=version, dataset=dataset, enable_guardrails=False)
+        return pipeline_mod.build(version=version, corpus=corpus, enable_guardrails=False)
     except ImportError as exc:
         print(
             f"[run_eval] core.pipeline is not yet available ({exc}). "
@@ -211,7 +211,7 @@ def run_eval(
     if fast:
         items = fast_subset(items, n=15)
 
-    pipeline = _build_pipeline(version, dataset)
+    pipeline = _build_pipeline(version, corpus=dataset)
     generator = build_generator(role="judge")
     embedder = build_embedder()
 
