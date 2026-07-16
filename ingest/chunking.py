@@ -44,16 +44,22 @@ def _split_paragraphs(text: str) -> list[str]:
 def _token_chunks_from_paragraph(
     para: str,
     max_tokens: int,
+    overlap: int = 0,
 ) -> list[list[int]]:
-    """Break a single paragraph into token-budget-sized slices (no overlap here)."""
+    """Break a single paragraph into token-budget-sized slices with overlap."""
     tokens = _tokenize(para)
     if len(tokens) <= max_tokens:
         return [tokens]
     slices = []
     start = 0
+    step = max_tokens - overlap
+    if step <= 0:
+        step = 1
     while start < len(tokens):
         slices.append(tokens[start : start + max_tokens])
-        start += max_tokens
+        if start + max_tokens >= len(tokens):
+            break
+        start += step
     return slices
 
 
@@ -68,7 +74,7 @@ def chunk_document(
     --------
     1. Split text on blank-line paragraph boundaries.
     2. Pack consecutive paragraphs into a window up to max_tokens.
-    3. When a paragraph alone exceeds max_tokens, split it token-wise.
+    3. When a paragraph alone exceeds max_tokens, split it token-wise with overlap.
     4. Prepend the tail (overlap tokens) of the previous chunk to the next one.
 
     Chunk IDs are ``{doc_id}::{ordinal:06d}`` — fully deterministic.
@@ -77,34 +83,39 @@ def chunk_document(
     encoder = _get_encoder()
     paragraphs = _split_paragraphs(doc.text)
 
-    # Collect raw token lists for all paragraphs (splitting oversized ones)
-    raw_slices: list[list[int]] = []
-    for para in paragraphs:
-        raw_slices.extend(_token_chunks_from_paragraph(para, max_tokens))
+    # Clean and bound overlap
+    overlap = min(overlap, max_tokens - 1)
+    if overlap < 0:
+        overlap = 0
 
-    if not raw_slices:
-        return []
+    chunks_tokens: list[list[int]] = []
+    current_chunk: list[int] = []
+
+    for para in paragraphs:
+        para_tokens = encoder.encode(para)
+        if not para_tokens:
+            continue
+
+        start_idx = 0
+        while start_idx < len(para_tokens):
+            space_left = max_tokens - len(current_chunk)
+            if space_left <= 0:
+                chunks_tokens.append(current_chunk)
+                prev_tail = current_chunk[-overlap:] if overlap > 0 else []
+                current_chunk = list(prev_tail)
+                space_left = max_tokens - len(current_chunk)
+
+            chunk_slice = para_tokens[start_idx : start_idx + space_left]
+            current_chunk.extend(chunk_slice)
+            start_idx += len(chunk_slice)
+
+    if current_chunk:
+        if not chunks_tokens or len(current_chunk) > overlap:
+            chunks_tokens.append(current_chunk)
 
     chunks: list[Chunk] = []
-    prev_tail: list[int] = []
-    ordinal = 0
-
-    for i, slice_tokens in enumerate(raw_slices):
-        window: list[int] = prev_tail + slice_tokens
-        # Pack additional slices if they fit
-        j = i + 1
-        while j < len(raw_slices):
-            candidate = window + raw_slices[j]
-            if len(candidate) > max_tokens:
-                break
-            window = candidate
-            j += 1
-
-        # Trim to max_tokens (in case overlap bloated it slightly)
-        if len(window) > max_tokens:
-            window = window[:max_tokens]
-
-        text = encoder.decode(window)
+    for ordinal, tokens in enumerate(chunks_tokens):
+        text = encoder.decode(tokens)
         chunk_id = f"{doc.doc_id}::{ordinal:06d}"
         chunks.append(
             Chunk(
@@ -118,51 +129,4 @@ def chunk_document(
                 source=doc.source,
             )
         )
-        prev_tail = window[-overlap:] if overlap > 0 else []
-        ordinal += 1
-
-        # Skip the slices we packed into this chunk
-        # But we can only do this safely for the packing loop above —
-        # the outer for-loop still walks every i. Use a visited set to skip.
-        # Simpler: rebuild using a while loop instead of for.
-        # See below — we rebuild with explicit index control.
-
-    # The packing logic above has a flaw: after packing i+1..j-1 into chunk[i],
-    # the for-loop still visits i+1..j-1 separately. Rewrite with explicit index.
-    # Discard the result above and redo properly.
-    chunks = []
-    prev_tail = []
-    ordinal = 0
-    i = 0
-    while i < len(raw_slices):
-        window = prev_tail + raw_slices[i]
-        j = i + 1
-        while j < len(raw_slices):
-            candidate = window + raw_slices[j]
-            if len(candidate) > max_tokens:
-                break
-            window = candidate
-            j += 1
-
-        if len(window) > max_tokens:
-            window = window[:max_tokens]
-
-        text = encoder.decode(window)
-        chunk_id = f"{doc.doc_id}::{ordinal:06d}"
-        chunks.append(
-            Chunk(
-                chunk_id=chunk_id,
-                doc_id=doc.doc_id,
-                text=text,
-                tenant_id=doc.tenant_id,
-                acl_tags=doc.acl_tags,
-                ordinal=ordinal,
-                title=doc.title,
-                source=doc.source,
-            )
-        )
-        prev_tail = window[-overlap:] if overlap > 0 else []
-        ordinal += 1
-        i = j  # skip packed slices
-
     return chunks
