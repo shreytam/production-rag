@@ -88,7 +88,9 @@ class Settings(BaseSettings):
     rerank_top_n: int = 8
     context_token_budget: int = 4000
     active_corpus: str = ""
-    hybrid_require_sparse: bool = False
+    # Fail-closed by default: an empty/missing sparse index under version="full"
+    # raises HybridIndexError instead of silently degrading to dense-only search.
+    hybrid_require_sparse: bool = True
     sparse_index_dir: str = ".cache"
     context_tokenizer: str = "auto"
     context_token_safety_margin: float = 0.0
