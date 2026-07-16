@@ -197,7 +197,8 @@ def answer_relevancy(
         return 0.0
 
     orig_vec = embedder.embed_query(question)
-    gen_vecs = embedder.embed_documents(generated)
+    # Fix asymmetric-model mismatch: embed both sides in query space
+    gen_vecs = [embedder.embed_query(q) for q in generated]
 
     sims = [_cosine(orig_vec, gv) for gv in gen_vecs]
     return float(np.mean(sims)) if sims else 0.0
