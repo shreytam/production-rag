@@ -27,12 +27,11 @@ def test_tenant_mismatch_fails_closed(tmp_path):
 
 def test_malicious_tenant_id_cannot_escape_manifest_dir(tmp_path):
     store = JsonlManifestStore(manifest_dir=str(tmp_path))
+    # The resolved on-disk path for malicious tenant_id/doc_id stays inside manifest_dir.
+    resolved = store._path_for("../../evil", "../../x").resolve()
+    assert str(resolved).startswith(str(store.manifest_dir.resolve()) + "/")
+
+    # Roundtrip with the malicious ids still works and stays contained.
     m = DocManifest(tenant_id="../../evil", doc_id="../../x", prompt_version="v1", chunks={})
     store.save(m)
-    # Every file written stays under manifest_dir.
-    written = list(tmp_path.rglob("*.json"))
-    assert written, "manifest should have been written"
-    for p in written:
-        assert str(p.resolve()).startswith(str(tmp_path.resolve()))
-    # Roundtrip with the same (malicious) ids still works.
     assert store.load("../../evil", "../../x") is not None

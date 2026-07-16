@@ -94,8 +94,10 @@ class Settings(BaseSettings):
     rerank_top_n: int = 8
     context_token_budget: int = 4000
     active_corpus: str = ""
-    # Fail-closed by default: an empty/missing sparse index under version="full"
-    # raises HybridIndexError instead of silently degrading to dense-only search.
+    # NOTE: build(version="full") now always uses the per-tenant TenantSparseStore,
+    # so this flag currently has no effect on the pipeline (the fail-closed gate that
+    # used to raise HybridIndexError on an empty/missing sparse index was removed).
+    # Kept for config/backward compatibility only.
     hybrid_require_sparse: bool = True
     sparse_index_dir: str = ".cache"
     tenant_sparse_dir: str = ".cache/sparse_tenants"
