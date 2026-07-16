@@ -13,8 +13,9 @@ class JsonlManifestStore:
         self.manifest_dir = Path(manifest_dir)
 
     def _path_for(self, tenant_id: str, doc_id: str) -> Path:
-        safe = hashlib.sha256(doc_id.encode("utf-8")).hexdigest()
-        return self.manifest_dir / tenant_id / f"{safe}.json"
+        tenant_safe = hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+        doc_safe = hashlib.sha256(doc_id.encode("utf-8")).hexdigest()
+        return self.manifest_dir / tenant_safe / f"{doc_safe}.json"
 
     def load(self, tenant_id: str, doc_id: str) -> DocManifest | None:
         path = self._path_for(tenant_id, doc_id)
