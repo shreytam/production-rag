@@ -330,14 +330,17 @@ class TestQdrantVectorStoreLive:
     COLLECTION = "test_acl_qdrant"
 
     @pytest.fixture(autouse=True)
-    def skip_if_offline(self):
+    def skip_if_offline(self, require_live_or_fail):
         """Skip the entire class if Qdrant is unreachable."""
+        reachable = True
         try:
             from qdrant_client import QdrantClient
             client = QdrantClient(url="http://localhost:6333")
             client.get_collections()  # will raise if server is down
-        except Exception as exc:
-            pytest.skip(f"Qdrant server not reachable: {exc}")
+        except Exception:
+            reachable = False
+
+        require_live_or_fail(reachable, "Qdrant")
 
     @pytest.fixture
     def store(self):
@@ -420,14 +423,17 @@ class TestPgVectorStoreLive:
     TABLE = "test_acl_pg"
 
     @pytest.fixture(autouse=True)
-    def skip_if_offline(self):
+    def skip_if_offline(self, require_live_or_fail):
         """Skip the entire class if Postgres is unreachable."""
+        reachable = True
         try:
             import psycopg
             conn = psycopg.connect("postgresql://rag:rag@localhost:5432/rag", connect_timeout=2)
             conn.close()
-        except Exception as exc:
-            pytest.skip(f"Postgres server not reachable: {exc}")
+        except Exception:
+            reachable = False
+
+        require_live_or_fail(reachable, "Postgres")
 
     @pytest.fixture
     def store(self):

@@ -128,19 +128,17 @@ def _pg_reachable(dsn: str) -> bool:
         return False
 
 
-def test_qdrant_live_isolation():
+def test_qdrant_live_isolation(require_live_or_fail):
     from providers.vectorstores.qdrant_store import QdrantVectorStore
 
     s = get_settings().model_copy(update={"qdrant_collection": "rag_isolation_test"})
-    if not _qdrant_reachable(s.qdrant_url):
-        pytest.skip("qdrant unreachable")
+    require_live_or_fail(_qdrant_reachable(s.qdrant_url), "Qdrant")
     _live_isolation_check(QdrantVectorStore(s))  # bugs here FAIL, not skip
 
 
-def test_pgvector_live_isolation():
+def test_pgvector_live_isolation(require_live_or_fail):
     from providers.vectorstores.pgvector_store import PgVectorStore
 
     s = get_settings().model_copy(update={"pg_table": "rag_isolation_test"})
-    if not _pg_reachable(s.pg_dsn):
-        pytest.skip("postgres unreachable")
+    require_live_or_fail(_pg_reachable(s.pg_dsn), "Postgres")
     _live_isolation_check(PgVectorStore(s))  # bugs here FAIL, not skip
