@@ -1,5 +1,3 @@
-import pytest
-from pathlib import Path
 import json
 from eval import compare as compare_module
 from eval.compare import compare

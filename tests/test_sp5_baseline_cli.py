@@ -1,7 +1,5 @@
-import pytest
 import sys
 import subprocess
-from pathlib import Path
 
 def test_run_eval_baseline_fails_without_fast():
     # Execute run_eval python command to verify validation logic

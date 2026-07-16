@@ -1,4 +1,3 @@
-import os
 import pytest
 from core.config import get_settings
 

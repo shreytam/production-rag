@@ -1,6 +1,4 @@
-import pytest
-from tests._fakes import RecordingGenerator
-from eval.llm_judge import holistic_judge, JudgeOutput
+from eval.llm_judge import holistic_judge
 
 def test_majority_vote_median():
     # Make a mock generator returning different scores

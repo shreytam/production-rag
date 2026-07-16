@@ -1,4 +1,3 @@
-import pytest
 from tests._fakes import RecordingGenerator
 
 def test_generator_receives_seed():

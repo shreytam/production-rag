@@ -1,5 +1,4 @@
-import pytest
-from core.config import Settings, get_settings
+from core.config import Settings
 
 def test_sp5_config_defaults():
     settings = Settings()

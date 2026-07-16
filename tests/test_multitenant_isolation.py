@@ -8,7 +8,6 @@ failure, not an accident of ranking.
 
 from __future__ import annotations
 
-import pytest
 
 from core.config import get_settings
 from core.pipeline import RAGPipeline
