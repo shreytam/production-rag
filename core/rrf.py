@@ -23,7 +23,9 @@ def reciprocal_rank_fusion(
     components: dict[str, dict[str, float]] = {}
 
     for ranking in rankings:
-        for rank, sc in enumerate(ranking, start=1):
+        # Sort each ranking to ensure stable rank assignment for tied scores
+        sorted_ranking = sorted(ranking, key=lambda sc: (-sc.score, sc.chunk_id))
+        for rank, sc in enumerate(sorted_ranking, start=1):
             cid = sc.chunk_id
             contribution = 1.0 / (k + rank)
             fused[cid] = fused.get(cid, 0.0) + contribution
@@ -32,7 +34,7 @@ def reciprocal_rank_fusion(
             if cid not in keep:
                 keep[cid] = sc
 
-    ordered = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
+    ordered = sorted(fused.items(), key=lambda kv: (-kv[1], kv[0]))
     out: list[ScoredChunk] = []
     for rank, (cid, score) in enumerate(ordered, start=1):
         base = keep[cid]
