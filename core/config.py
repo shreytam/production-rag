@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     retrieve_top_k: int = 20
     rerank_top_n: int = 8
     context_token_budget: int = 4000
+    active_corpus: str = ""
+    hybrid_require_sparse: bool = False
+    sparse_index_dir: str = ".cache"
+    context_tokenizer: str = "auto"
+    context_token_safety_margin: float = 0.0
+    chunk_overlap: int = 200
 
     # --- Guardrails ---
     # On for the production query path (api/demo). The eval path forces this OFF

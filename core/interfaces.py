@@ -133,3 +133,10 @@ class PIIDetector(Protocol):
     """Contract for a PII detection engine."""
     def detect(self, text: str) -> list[PIISpan]: ...
 
+
+@runtime_checkable
+class SparseIndexLoader(Protocol):
+    """Loads a persisted sparse index from disk."""
+
+    def load(self, corpus: str, store: str) -> SparseRetriever | None: ...
+
