@@ -12,6 +12,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from core.config import Settings
 from core.context_assembly import assemble_context
 from core.interfaces import Generator
 from core.types import Answer, ChatMessage, Citation, ScoredChunk
@@ -33,12 +34,26 @@ class GeneratedAnswer(BaseModel):
 
 
 class GroundedGenerator:
-    def __init__(self, generator: Generator, token_budget: int = 4000):
+    def __init__(
+        self,
+        generator: Generator,
+        token_budget: int = 4000,
+        settings: Settings | None = None,
+    ):
         self.generator = generator
         self.token_budget = token_budget
+        self.settings = settings
 
     def generate(self, question: str, chunks: list[ScoredChunk]) -> Answer:
-        ctx = assemble_context(chunks, self.token_budget)
+        from core.config import get_settings
+        from core.context_assembly import resolve_encoding
+
+        s = self.settings or get_settings()
+        encoding_name = resolve_encoding(s.context_tokenizer, s.gen_model)
+        margin = s.context_token_safety_margin
+        scaled_budget = int(self.token_budget * (1.0 - margin))
+
+        ctx = assemble_context(chunks, scaled_budget, encoding_name=encoding_name)
         marker_map = ctx.marker_to_chunk
 
         messages = [

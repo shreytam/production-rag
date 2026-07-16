@@ -261,7 +261,7 @@ def build(
     embedder = build_embedder(s)
     store = build_vector_store(s)
     generator = build_generator("gen", s)
-    grounded = GroundedGenerator(generator, token_budget=s.context_token_budget)
+    grounded = GroundedGenerator(generator, token_budget=s.context_token_budget, settings=s)
 
     if version == "baseline":
         retriever = DenseRetriever(embedder, store)

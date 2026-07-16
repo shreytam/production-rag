@@ -13,15 +13,26 @@ from functools import lru_cache
 from core.types import ScoredChunk
 
 
-@lru_cache(maxsize=1)
-def _encoder():
+@lru_cache(maxsize=4)
+def _encoder(encoding_name: str = "cl100k_base"):
     import tiktoken
 
-    return tiktoken.get_encoding("cl100k_base")
+    return tiktoken.get_encoding(encoding_name)
 
 
-def count_tokens(text: str) -> int:
-    return len(_encoder().encode(text))
+def count_tokens(text: str, encoding_name: str = "cl100k_base") -> int:
+    return len(_encoder(encoding_name).encode(text))
+
+
+def resolve_encoding(context_tokenizer: str, gen_model: str) -> str:
+    if context_tokenizer != "auto":
+        return context_tokenizer
+    m = gen_model.lower()
+    if "gpt-4o" in m or "o200k" in m:
+        return "o200k_base"
+    if "gpt-4" in m or "gpt-3.5" in m or "cl100k" in m:
+        return "cl100k_base"
+    return "cl100k_base"
 
 
 @dataclass
@@ -45,7 +56,7 @@ def _render(marker: int, sc: ScoredChunk) -> str:
 
 
 def assemble_context(
-    chunks: list[ScoredChunk], token_budget: int
+    chunks: list[ScoredChunk], token_budget: int, encoding_name: str = "cl100k_base"
 ) -> AssembledContext:
     """Greedily pack ranked chunks (dedup by chunk_id) until the budget is hit.
 
@@ -64,7 +75,7 @@ def assemble_context(
         seen.add(sc.chunk_id)
         marker += 1
         block = _render(marker, sc)
-        cost = count_tokens(block)
+        cost = count_tokens(block, encoding_name)
         if used and total + cost > token_budget:
             marker -= 1
             break
