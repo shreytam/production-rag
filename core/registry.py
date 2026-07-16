@@ -46,8 +46,18 @@ def build_vector_store(settings: Settings | None = None) -> VectorStore:
     raise ValueError(f"Unknown vector_store: {s.vector_store}")
 
 
-def build_sparse_retriever(settings: Settings | None = None) -> SparseRetriever:
+def build_sparse_retriever(
+    settings: Settings | None = None, corpus: str | None = None
+) -> SparseRetriever:
+    s = settings or get_settings()
     from providers.sparse.bm25 import BM25Retriever
+    from providers.sparse.pickle_loader import PickleSparseIndexLoader
+
+    if corpus:
+        loader = PickleSparseIndexLoader(s)
+        loaded = loader.load(corpus, s.vector_store)
+        if loaded is not None:
+            return loaded
 
     return BM25Retriever()
 
