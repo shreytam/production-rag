@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # raises HybridIndexError instead of silently degrading to dense-only search.
     hybrid_require_sparse: bool = True
     sparse_index_dir: str = ".cache"
+    tenant_sparse_dir: str = ".cache/sparse_tenants"
     context_tokenizer: str = "auto"
     context_token_safety_margin: float = 0.0
     chunk_overlap: int = 200

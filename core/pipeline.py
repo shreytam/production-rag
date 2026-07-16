@@ -16,7 +16,6 @@ from core.registry import (
     build_embedder,
     build_generator,
     build_reranker,
-    build_sparse_retriever,
     build_vector_store,
 )
 from core.types import ACLContext, Answer, Query
@@ -253,9 +252,14 @@ def build(
     ``enable_guardrails``: None => follow ``settings.guardrails_enabled`` (the
     production default, True). The eval entry points pass ``False`` explicitly so
     blocking guards never confound generation metrics or add per-item LLM cost.
+
+    ``corpus``: unused now that ``version="full"`` no longer binds a corpus-pickle
+    sparse index at build time. Its sparse retriever is a `TenantSparseStore` that
+    resolves the caller's tenant index at QUERY time instead (see
+    ``core.registry.build_tenant_sparse_store``). Kept as a parameter for existing
+    call sites; callers may drop it in a future cleanup.
     """
     s = settings or get_settings()
-    resolved_corpus = corpus or s.active_corpus
     embedder = build_embedder(s)
     store = build_vector_store(s)
     generator = build_generator("gen", s)
@@ -264,24 +268,9 @@ def build(
     if version == "baseline":
         retriever = DenseRetriever(embedder, store)
     elif version == "full":
-        sparse = build_sparse_retriever(s, resolved_corpus)
+        from core.registry import build_tenant_sparse_store
 
-        # Check if the sparse index is empty
-        is_empty = False
-        if hasattr(sparse, "_indices"):
-            is_empty = len(getattr(sparse, "_indices", {})) == 0
-
-        if is_empty:
-            if s.hybrid_require_sparse:
-                raise HybridIndexError(
-                    f"Sparse index for corpus '{resolved_corpus}' is empty or could not be loaded, "
-                    "and hybrid_require_sparse is True."
-                )
-            else:
-                logger.warning(
-                    f"Sparse index for corpus '{resolved_corpus}' is empty or could not be loaded."
-                )
-
+        sparse = build_tenant_sparse_store(s)
         reranker = build_reranker(s)
         retriever = HybridRetriever(embedder, store, sparse, reranker, rrf_k=s.rrf_k)
     else:

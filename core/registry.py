@@ -62,6 +62,16 @@ def build_sparse_retriever(
     return BM25Retriever()
 
 
+def build_tenant_sparse_store(settings: Settings | None = None):
+    """Persistent per-tenant BM25 store: `core.pipeline.build(version="full")`
+    resolves the sparse index for the caller's tenant at query time rather than
+    binding one corpus-pickle at build time (see providers.sparse.tenant_store)."""
+    s = settings or get_settings()
+    from providers.sparse.tenant_store import TenantSparseStore
+
+    return TenantSparseStore(index_dir=s.tenant_sparse_dir)
+
+
 def build_reranker(settings: Settings | None = None) -> Reranker:
     s = settings or get_settings()
     if s.reranker == "local":
