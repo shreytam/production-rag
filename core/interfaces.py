@@ -77,6 +77,10 @@ class SparseRetriever(Protocol):
 
     def search(self, query: str, top_k: int, acl: ACLContext) -> list[ScoredChunk]: ...
 
+    def add(self, chunks: list[Chunk]) -> None: ...
+
+    def delete(self, chunk_ids: list[str], acl: ACLContext) -> None: ...
+
 
 @runtime_checkable
 class Retriever(Protocol):
