@@ -416,6 +416,34 @@ class TestQdrantVectorStoreLive:
         for sc in results:
             assert sc.source == RetrievalSource.DENSE
 
+    def _chunk(self, chunk_id: str, *, tenant: str, collection_id: str, text: str) -> Chunk:
+        """Build an embedded Chunk with the given collection_id (mirrors _dummy_chunks_for_live)."""
+        return Chunk(
+            chunk_id=chunk_id,
+            doc_id=f"doc-{chunk_id}",
+            tenant_id=tenant,
+            collection_id=collection_id,
+            text=text,
+            embedding=self.embed(text),
+        )
+
+    def embed(self, text: str) -> list[float]:
+        """Deterministic tiny embedding for tests: hash text into a unit-ish vector."""
+        v = [0.0] * DIM
+        for i, ch in enumerate(text):
+            v[i % DIM] += ord(ch)
+        norm = math.sqrt(sum(x * x for x in v)) or 1.0
+        return [x / norm for x in v]
+
+    def test_collection_scoping(self, store):
+        from core.types import ACLContext
+        a = self._chunk("cola", tenant="t", collection_id="A", text="shared alpha")
+        b = self._chunk("colb", tenant="t", collection_id="B", text="shared beta")
+        store.upsert([a, b])
+        acl = ACLContext(tenant_id="t")
+        hits = store.search(self.embed("shared"), 5, acl, collection_id="A")
+        assert {h.chunk.chunk_id for h in hits} == {"cola"}
+
 
 class TestPgVectorStoreLive:
     """Round-trip tests against a live PostgreSQL + pgvector server."""
