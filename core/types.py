@@ -216,7 +216,7 @@ class GuardrailResult(BaseModel):
 
 class PIISpan(BaseModel):
     """Represents a validated block of detected PII.
-    
+
     SECURITY: Contains only coordinates and type; never holds the segment's raw text.
     """
     type: str
@@ -227,4 +227,36 @@ class PIISpan(BaseModel):
         "frozen": True,
         "extra": "forbid"
     }
+
+
+class ChunkRecord(BaseModel):
+    chunk_id: str
+    ordinal: int
+    embed_hash: str
+    meta_hash: str
+
+
+class DocManifest(BaseModel):
+    tenant_id: str
+    doc_id: str
+    prompt_version: str = "v1"
+    chunks: dict[str, ChunkRecord] = Field(default_factory=dict)
+
+
+class DocumentStatus(str, Enum):
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class DocumentRecord(BaseModel):
+    document_id: str
+    tenant_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    status: DocumentStatus
+    blob_key: str
+    error: str = ""
+    chunk_count: int = 0
 

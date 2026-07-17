@@ -87,3 +87,38 @@ class BM25Retriever:
                 )
             )
         return results
+
+    def _rebuild_tenant(self, tenant_id: str, chunks: list[Chunk]) -> None:
+        if not chunks:
+            self._indices.pop(tenant_id, None)
+            return
+        corpus = [_tokenize(c.embed_text) for c in chunks]
+        self._indices[tenant_id] = (BM25Okapi(corpus), chunks)
+
+    def add(self, chunks: list[Chunk]) -> None:
+        by_tenant: dict[str, list[Chunk]] = {}
+        for c in chunks:
+            by_tenant.setdefault(c.tenant_id, []).append(c)
+        for tenant_id, new_chunks in by_tenant.items():
+            existing = list(self._indices.get(tenant_id, (None, []))[1])
+            existing_ids = {c.chunk_id for c in existing}
+            merged = existing + [c for c in new_chunks if c.chunk_id not in existing_ids]
+            # replace chunks whose id already existed (content may have changed)
+            new_by_id = {c.chunk_id: c for c in new_chunks}
+            merged = [new_by_id.get(c.chunk_id, c) for c in merged]
+            self._rebuild_tenant(tenant_id, merged)
+
+    def delete(self, chunk_ids: list[str], acl: ACLContext) -> None:
+        entry = self._indices.get(acl.tenant_id)
+        if entry is None:
+            return
+        drop = set(chunk_ids)
+        kept = [c for c in entry[1] if c.chunk_id not in drop]
+        self._rebuild_tenant(acl.tenant_id, kept)
+
+    def snapshot(self, tenant_id: str) -> list[Chunk]:
+        entry = self._indices.get(tenant_id)
+        return list(entry[1]) if entry else []
+
+    def load_snapshot(self, tenant_id: str, chunks: list[Chunk]) -> None:
+        self._rebuild_tenant(tenant_id, list(chunks))

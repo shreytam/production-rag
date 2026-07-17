@@ -182,6 +182,34 @@ class PgVectorStore:
             )
         return scored
 
+    def delete(self, chunk_ids: list[str], acl: ACLContext) -> None:
+        """Delete rows, scoped to the caller's ACL (tenant + tags)."""
+        if not chunk_ids:
+            return
+        where_sql, where_params = pg_where(acl)
+        query = f"DELETE FROM {self._table} WHERE chunk_id = ANY(%s) AND {where_sql}"
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, [list(chunk_ids)] + where_params)
+            conn.commit()
+
+    def update_metadata(self, updates: dict[str, dict], acl: ACLContext) -> None:
+        """Patch row metadata (currently: title), scoped to the caller's ACL."""
+        if not updates:
+            return
+        where_sql, where_params = pg_where(acl)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                for chunk_id, payload in updates.items():
+                    if "title" not in payload:
+                        continue
+                    query = (
+                        f"UPDATE {self._table} SET title = %s "
+                        f"WHERE chunk_id = %s AND {where_sql}"
+                    )
+                    cur.execute(query, [payload["title"], chunk_id] + where_params)
+            conn.commit()
+
     def count(self, acl: ACLContext | None = None) -> int:
         """Count rows, optionally scoped to an ACL context."""
         with self._conn() as conn:

@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # --- OpenAI-compatible model router (one base_url + key for all roles) ---
+    # Any model role left at the NIM default url / empty key inherits these.
+    # The reranker is intentionally excluded (no OpenAI-standard rerank endpoint).
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+
     # --- Vector store: one switch ---
     vector_store: Literal["qdrant", "pgvector"] = "qdrant"
     qdrant_url: str = "http://localhost:6333"
@@ -88,10 +94,13 @@ class Settings(BaseSettings):
     rerank_top_n: int = 8
     context_token_budget: int = 4000
     active_corpus: str = ""
-    # Fail-closed by default: an empty/missing sparse index under version="full"
-    # raises HybridIndexError instead of silently degrading to dense-only search.
+    # NOTE: build(version="full") now always uses the per-tenant TenantSparseStore,
+    # so this flag currently has no effect on the pipeline (the fail-closed gate that
+    # used to raise HybridIndexError on an empty/missing sparse index was removed).
+    # Kept for config/backward compatibility only.
     hybrid_require_sparse: bool = True
     sparse_index_dir: str = ".cache"
+    tenant_sparse_dir: str = ".cache/sparse_tenants"
     context_tokenizer: str = "auto"
     context_token_safety_margin: float = 0.0
     chunk_overlap: int = 200
@@ -137,6 +146,7 @@ class Settings(BaseSettings):
     # --- Ingest sizing (keep corpora small to respect NIM rate limits) ---
     max_chunks_per_corpus: int = 2000
     contextual_cache_dir: str = ".cache/contextual"
+    manifest_dir: str = ".cache/manifest"
 
     # --- Eval Gate & Stats ---
     eval_tolerance: float = 0.03
@@ -153,6 +163,38 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("rag_require_live_stores", "require_live_stores")
     )
+
+    # --- Product ingest (API upload) ---
+    ingest_allowed_types: str = (
+        "text/plain,text/markdown,application/pdf,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "text/html"
+    )
+    max_upload_bytes: int = 25 * 1024 * 1024  # 25 MiB
+    blob_store_root: str = ".cache/uploads"
+    doc_registry_backend: Literal["memory", "postgres"] = "postgres"
+    doc_registry_table: str = "documents"
+
+    # --- Async ingest worker (arq) ---
+    redis_url: str = "redis://localhost:6379"
+    redis_password: str = ""
+    ingest_queue_name: str = "ingest"
+
+    @model_validator(mode="after")
+    def _apply_llm_router(self) -> "Settings":
+        """Point every model role at one OpenAI-compatible router unless the role
+        was explicitly overridden. A role url still at the NIM default, or a role
+        with an empty base url, adopts llm_base_url; empty role keys adopt
+        llm_api_key. The reranker is deliberately not routed."""
+        if self.llm_base_url:
+            for field in ("embed_base_url", "gen_base_url", "context_base_url", "judge_base_url"):
+                if getattr(self, field) in ("", NIM_BASE_URL):
+                    setattr(self, field, self.llm_base_url)
+        if self.llm_api_key:
+            for field in ("embed_api_key", "gen_api_key", "context_api_key", "judge_api_key"):
+                if not getattr(self, field):
+                    setattr(self, field, self.llm_api_key)
+        return self
 
     @model_validator(mode="after")
     def _fill_key_fallbacks(self) -> "Settings":

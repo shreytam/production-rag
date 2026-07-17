@@ -132,6 +132,28 @@ class QdrantVectorStore:
             )
         return scored
 
+    def delete(self, chunk_ids: list[str], acl: ACLContext) -> None:
+        """Delete points, scoped to the caller's ACL (tenant + tags)."""
+        if not chunk_ids:
+            return
+        ids = [_chunk_uuid(cid) for cid in chunk_ids]
+        combined = qm.Filter(must=[qm.HasIdCondition(has_id=ids), qdrant_filter(acl)])
+        self._client.delete(
+            collection_name=self._collection,
+            points_selector=qm.FilterSelector(filter=combined),
+        )
+
+    def update_metadata(self, updates: dict[str, dict], acl: ACLContext) -> None:
+        """Patch point payloads, scoped to the caller's ACL (tenant + tags)."""
+        for chunk_id, payload in updates.items():
+            pt = _chunk_uuid(chunk_id)
+            combined = qm.Filter(must=[qm.HasIdCondition(has_id=[pt]), qdrant_filter(acl)])
+            self._client.set_payload(
+                collection_name=self._collection,
+                payload=payload,
+                points=qm.FilterSelector(filter=combined),
+            )
+
     def count(self, acl: ACLContext | None = None) -> int:
         """Count points, optionally scoped to an ACL context."""
         count_filter = qdrant_filter(acl) if acl is not None else None

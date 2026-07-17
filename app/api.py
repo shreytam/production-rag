@@ -44,6 +44,11 @@ def get_pipeline():
 
 app = FastAPI(title="Production RAG API", version="1.0.0")
 
+# Async document ingestion API (upload + tenant-scoped status).
+from app.documents import router as documents_router  # noqa: E402
+
+app.include_router(documents_router)
+
 
 class QueryRequest(BaseModel):
     # Identity (tenant_id/acl_tags) intentionally REMOVED — it comes only from the

@@ -15,6 +15,9 @@ from pydantic import BaseModel
 from core.types import (
     ACLContext,
     Chunk,
+    DocManifest,
+    DocumentRecord,
+    DocumentStatus,
     GuardrailResult,
     LLMResponse,
     Principal,
@@ -63,6 +66,10 @@ class VectorStore(Protocol):
 
     def count(self, acl: ACLContext | None = None) -> int: ...
 
+    def delete(self, chunk_ids: list[str], acl: ACLContext) -> None: ...
+
+    def update_metadata(self, updates: dict[str, dict], acl: ACLContext) -> None: ...
+
 
 @runtime_checkable
 class SparseRetriever(Protocol):
@@ -71,6 +78,10 @@ class SparseRetriever(Protocol):
     def index(self, chunks: list[Chunk]) -> None: ...
 
     def search(self, query: str, top_k: int, acl: ACLContext) -> list[ScoredChunk]: ...
+
+    def add(self, chunks: list[Chunk]) -> None: ...
+
+    def delete(self, chunk_ids: list[str], acl: ACLContext) -> None: ...
 
 
 @runtime_checkable
@@ -140,4 +151,27 @@ class SparseIndexLoader(Protocol):
     """Loads a persisted sparse index from disk."""
 
     def load(self, corpus: str, store: str) -> SparseRetriever | None: ...
+
+
+@runtime_checkable
+class ManifestStore(Protocol):
+    def load(self, tenant_id: str, doc_id: str) -> "DocManifest | None": ...
+    def save(self, manifest: "DocManifest") -> None: ...
+    def delete(self, tenant_id: str, doc_id: str) -> None: ...
+
+
+@runtime_checkable
+class BlobStore(Protocol):
+    def put(self, key: str, data: bytes) -> None: ...
+    def get(self, key: str) -> bytes: ...
+    def delete(self, key: str) -> None: ...
+
+
+@runtime_checkable
+class DocumentRegistry(Protocol):
+    def create(self, record: "DocumentRecord") -> None: ...
+    def get(self, document_id: str, tenant_id: str) -> "DocumentRecord | None": ...
+    def list(self, tenant_id: str) -> "list[DocumentRecord]": ...
+    def set_status(self, document_id: str, tenant_id: str, status: "DocumentStatus",
+                   *, error: str = "", chunk_count: int = 0) -> None: ...
 

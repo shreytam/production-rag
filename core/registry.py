@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Literal
 
 from core.config import Settings, get_settings
-from core.interfaces import Embedder, Generator, Reranker, SparseRetriever, VectorStore, PIIDetector
+from core.interfaces import Embedder, Generator, ManifestStore, Reranker, SparseRetriever, VectorStore, PIIDetector, BlobStore
 
 GeneratorRole = Literal["gen", "context", "judge"]
 
@@ -60,6 +60,16 @@ def build_sparse_retriever(
             return loaded
 
     return BM25Retriever()
+
+
+def build_tenant_sparse_store(settings: Settings | None = None):
+    """Persistent per-tenant BM25 store: `core.pipeline.build(version="full")`
+    resolves the sparse index for the caller's tenant at query time rather than
+    binding one corpus-pickle at build time (see providers.sparse.tenant_store)."""
+    s = settings or get_settings()
+    from providers.sparse.tenant_store import TenantSparseStore
+
+    return TenantSparseStore(index_dir=s.tenant_sparse_dir)
 
 
 def build_reranker(settings: Settings | None = None) -> Reranker:
@@ -145,4 +155,49 @@ def build_pii_detector(settings: Settings | None = None) -> PIIDetector:
         from providers.pii.presidio_detector import PresidioPIIDetector
         return PresidioPIIDetector()
     raise ValueError(f"Unknown pii_detector configured: {s.pii_detector}")
+
+
+def build_manifest_store(settings: Settings | None = None) -> ManifestStore:
+    s = settings or get_settings()
+    from providers.manifest.jsonl_store import JsonlManifestStore
+
+    return JsonlManifestStore(manifest_dir=s.manifest_dir)
+
+
+def build_incremental_ingestor(settings: Settings | None = None):
+    s = settings or get_settings()
+    from ingest.incremental import IncrementalIngestor
+
+    return IncrementalIngestor(
+        build_embedder(s),
+        build_vector_store(s),
+        build_tenant_sparse_store(s),
+        build_manifest_store(s),
+    )
+
+
+def build_blob_store(settings: Settings | None = None) -> BlobStore:
+    s = settings or get_settings()
+    from providers.blobstore.local_disk import LocalDiskBlobStore
+
+    return LocalDiskBlobStore(root=s.blob_store_root)
+
+
+def build_parser_registry(settings: Settings | None = None):
+    s = settings or get_settings()
+    from ingest.parsers.base import ParserRegistry
+
+    allowed = {t.strip() for t in s.ingest_allowed_types.split(",") if t.strip()}
+    return ParserRegistry(allowed_types=allowed, max_bytes=s.max_upload_bytes)
+
+
+def build_document_registry(settings: Settings | None = None):
+    s = settings or get_settings()
+    if s.doc_registry_backend == "memory":
+        from providers.docstore.memory import InMemoryDocumentRegistry
+
+        return InMemoryDocumentRegistry()
+    from providers.docstore.postgres import PostgresDocumentRegistry
+
+    return PostgresDocumentRegistry(s.pg_dsn, s.doc_registry_table)
 
