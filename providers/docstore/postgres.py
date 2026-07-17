@@ -53,6 +53,17 @@ class PostgresDocumentRegistry:
             row = cur.fetchone()
         return self._row(row) if row else None
 
+    def get_privileged(self, document_id: str) -> DocumentRecord | None:
+        """Trusted, tenant-unscoped lookup for the worker (the row carries the
+        tenant it was created under)."""
+        with self._conn() as c, c.cursor() as cur:
+            cur.execute(
+                f"SELECT document_id, tenant_id, filename, content_type, size_bytes, "
+                f"status, blob_key, error, chunk_count FROM {self._table} "
+                f"WHERE document_id=%s", [document_id])
+            row = cur.fetchone()
+        return self._row(row) if row else None
+
     def list(self, tenant_id: str) -> list[DocumentRecord]:
         with self._conn() as c, c.cursor() as cur:
             cur.execute(

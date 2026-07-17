@@ -175,6 +175,11 @@ class Settings(BaseSettings):
     doc_registry_backend: Literal["memory", "postgres"] = "postgres"
     doc_registry_table: str = "documents"
 
+    # --- Async ingest worker (arq) ---
+    redis_url: str = "redis://localhost:6379"
+    redis_password: str = ""
+    ingest_queue_name: str = "ingest"
+
     @model_validator(mode="after")
     def _apply_llm_router(self) -> "Settings":
         """Point every model role at one OpenAI-compatible router unless the role

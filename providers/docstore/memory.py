@@ -14,6 +14,11 @@ class InMemoryDocumentRegistry:
         r = self._rows.get(document_id)
         return r if r and r.tenant_id == tenant_id else None
 
+    def get_privileged(self, document_id: str) -> DocumentRecord | None:
+        """Trusted, tenant-unscoped lookup for the worker (the row carries the
+        tenant it was created under)."""
+        return self._rows.get(document_id)
+
     def list(self, tenant_id: str) -> list[DocumentRecord]:
         return [r for r in self._rows.values() if r.tenant_id == tenant_id]
 
