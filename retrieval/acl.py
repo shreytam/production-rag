@@ -18,12 +18,13 @@ from qdrant_client import models as qm
 from core.types import ACLContext, Chunk
 
 
-def qdrant_filter(acl: ACLContext) -> qm.Filter:
+def qdrant_filter(acl: ACLContext, *, collection_id: str | None = None) -> qm.Filter:
     """Return a Qdrant Filter that enforces ACL before similarity scoring.
 
     Strategy:
       MUST  tenant_id == acl.tenant_id
       MUST  (acl_open == True  OR  acl_tags overlaps caller's tags)
+      MUST  collection_id == collection_id   (only when collection_id is not None)
 
     We model "chunk is open" via the `acl_open` boolean payload flag
     (set at upsert to `not bool(chunk.acl_tags)`).
@@ -31,6 +32,9 @@ def qdrant_filter(acl: ACLContext) -> qm.Filter:
     The tag-overlap branch is only included when the caller actually
     holds tags; a no-tag caller may only see open chunks, which the
     unconditional `acl_open == True` already covers.
+
+    `collection_id=None` (the default) means "no collection filter" —
+    behaviour is unchanged from before this parameter existed.
     """
     # Always: chunk must be open
     visibility_should: list[qm.Condition] = [
@@ -46,35 +50,55 @@ def qdrant_filter(acl: ACLContext) -> qm.Filter:
             )
         )
 
-    return qm.Filter(
-        must=[
+    must: list[qm.Condition] = [
+        qm.FieldCondition(
+            key="tenant_id",
+            match=qm.MatchValue(value=acl.tenant_id),
+        ),
+        qm.Filter(should=visibility_should),
+    ]
+    if collection_id is not None:
+        must.append(
             qm.FieldCondition(
-                key="tenant_id",
-                match=qm.MatchValue(value=acl.tenant_id),
-            ),
-            qm.Filter(should=visibility_should),
-        ]
-    )
+                key="collection_id",
+                match=qm.MatchValue(value=collection_id),
+            )
+        )
+
+    return qm.Filter(must=must)
 
 
-def pg_where(acl: ACLContext) -> tuple[str, list]:
+def pg_where(acl: ACLContext, *, collection_id: str | None = None) -> tuple[str, list]:
     """Return (sql_fragment, params) for a PostgreSQL WHERE clause.
 
     Fragment:
         tenant_id = %s AND (cardinality(acl_tags)=0 OR acl_tags && %s)
+        [AND collection_id = %s]   (only when collection_id is not None)
 
     `&&` is the array-overlap operator; an empty caller tag array will
     never overlap, so no-tag callers see only cardinality-0 (open) chunks —
     matching allows() semantics exactly.
+
+    `collection_id=None` (the default) means "no collection filter" —
+    behaviour is unchanged from before this parameter existed.
     """
     fragment = "tenant_id = %s AND (cardinality(acl_tags)=0 OR acl_tags && %s)"
     params: list = [acl.tenant_id, list(acl.acl_tags)]
+    if collection_id is not None:
+        fragment += " AND collection_id = %s"
+        params.append(collection_id)
     return fragment, params
 
 
-def acl_predicate(acl: ACLContext) -> Callable[[Chunk], bool]:
+def acl_predicate(acl: ACLContext, *, collection_id: str | None = None) -> Callable[[Chunk], bool]:
     """Return a callable that tests whether `acl` may see a given chunk.
 
     Delegates entirely to ACLContext.allows() — single source of truth.
+
+    `collection_id=None` (the default) means "no collection filter" —
+    behaviour is unchanged from before this parameter existed. When set,
+    the chunk's `collection_id` must equal it as well.
     """
-    return lambda chunk: acl.allows(chunk.acl)
+    if collection_id is None:
+        return lambda chunk: acl.allows(chunk.acl)
+    return lambda chunk: acl.allows(chunk.acl) and chunk.collection_id == collection_id
