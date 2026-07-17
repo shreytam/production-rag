@@ -164,6 +164,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("rag_require_live_stores", "require_live_stores")
     )
 
+    # --- Product ingest (API upload) ---
+    ingest_allowed_types: str = (
+        "text/plain,text/markdown,application/pdf,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "text/html"
+    )
+    max_upload_bytes: int = 25 * 1024 * 1024  # 25 MiB
+
     @model_validator(mode="after")
     def _apply_llm_router(self) -> "Settings":
         """Point every model role at one OpenAI-compatible router unless the role

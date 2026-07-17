@@ -175,3 +175,11 @@ def build_incremental_ingestor(settings: Settings | None = None):
         build_manifest_store(s),
     )
 
+
+def build_parser_registry(settings: Settings | None = None):
+    s = settings or get_settings()
+    from ingest.parsers.base import ParserRegistry
+
+    allowed = {t.strip() for t in s.ingest_allowed_types.split(",") if t.strip()}
+    return ParserRegistry(allowed_types=allowed, max_bytes=s.max_upload_bytes)
+
