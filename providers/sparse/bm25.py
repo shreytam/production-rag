@@ -50,12 +50,14 @@ class BM25Retriever:
             corpus = [_tokenize(c.embed_text) for c in t_chunks]
             self._indices[tenant_id] = (BM25Okapi(corpus), t_chunks)
 
-    def search(self, query: str, top_k: int, acl: ACLContext) -> list[ScoredChunk]:
+    def search(self, query: str, top_k: int, acl: ACLContext, *,
+               collection_id: str | None = None) -> list[ScoredChunk]:
         """Return top-k chunks for the caller's tenant, filtered by ACL tags.
 
         Cross-tenant isolation: we only access the acl.tenant_id index.
         Tag scoping: acl_predicate filters out tag-restricted chunks the
-        caller cannot see.
+        caller cannot see. `collection_id` (optional) further restricts to
+        chunks in that collection.
         """
         if acl.tenant_id not in self._indices:
             return []
@@ -68,7 +70,7 @@ class BM25Retriever:
         scores = bm25.get_scores(tokens)
 
         # Build (score, chunk) pairs, apply ACL predicate, sort descending
-        predicate = acl_predicate(acl)
+        predicate = acl_predicate(acl, collection_id=collection_id)
         candidates: list[tuple[float, Chunk]] = [
             (float(scores[i]), chunk)
             for i, chunk in enumerate(chunks)

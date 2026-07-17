@@ -58,8 +58,9 @@ class TenantSparseStore:
         self._retriever(acl.tenant_id).delete(chunk_ids, acl)
         self._save(acl.tenant_id)
 
-    def search(self, query: str, top_k: int, acl: ACLContext) -> list[ScoredChunk]:
-        return self._retriever(acl.tenant_id).search(query, top_k, acl)
+    def search(self, query: str, top_k: int, acl: ACLContext, *,
+               collection_id: str | None = None) -> list[ScoredChunk]:
+        return self._retriever(acl.tenant_id).search(query, top_k, acl, collection_id=collection_id)
 
     def index(self, chunks: list[Chunk]) -> None:
         # Full (re)index: route through add so persistence + partitioning apply.
