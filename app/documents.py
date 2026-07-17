@@ -44,7 +44,7 @@ def _validate_collection_id(value: str) -> str:
 _registry = None
 _blobs = None
 _parsers = None
-_enqueuer: Callable[[str], Awaitable[None]] | None = None
+_enqueuer: Callable[..., Awaitable[None]] | None = None
 
 
 def get_registry():
@@ -74,7 +74,7 @@ def get_parsers() -> ParserRegistry:
     return _parsers
 
 
-def get_enqueuer() -> Callable[[str], Awaitable[None]]:
+def get_enqueuer() -> Callable[..., Awaitable[None]]:
     global _enqueuer
     if _enqueuer is None:
         _enqueuer = _build_arq_enqueuer()
@@ -83,12 +83,14 @@ def get_enqueuer() -> Callable[[str], Awaitable[None]]:
 
 _pool = None
 
+_ACTION_TO_FN = {"ingest": "ingest_document", "delete": "delete_document"}
 
-def _build_arq_enqueuer() -> Callable[[str], Awaitable[None]]:
-    """Default enqueuer: submit `ingest_document` to arq/Redis. The pool is
+
+def _build_arq_enqueuer() -> Callable[..., Awaitable[None]]:
+    """Default enqueuer: submit an ingest/delete job to arq/Redis. The pool is
     created on first use and reused (FastAPI runs on a single event loop)."""
 
-    async def enqueue(document_id: str) -> None:
+    async def enqueue(document_id: str, action: str = "ingest") -> None:
         global _pool
         if _pool is None:
             from arq import create_pool
@@ -96,7 +98,7 @@ def _build_arq_enqueuer() -> Callable[[str], Awaitable[None]]:
             from ingest.worker import WorkerSettings
 
             _pool = await create_pool(WorkerSettings.redis_settings())
-        await _pool.enqueue_job("ingest_document", document_id)
+        await _pool.enqueue_job(_ACTION_TO_FN[action], document_id)
 
     return enqueue
 
@@ -121,7 +123,7 @@ async def upload_document(
     registry=Depends(get_registry),
     blobs=Depends(get_blobs),
     parsers: ParserRegistry = Depends(get_parsers),
-    enqueue: Callable[[str], Awaitable[None]] = Depends(get_enqueuer),
+    enqueue: Callable[..., Awaitable[None]] = Depends(get_enqueuer),
 ):
     collection_id = _validate_collection_id(collection_id)
 
@@ -205,3 +207,18 @@ def get_document(
         "chunk_count": record.chunk_count,
         "error": record.error,
     }
+
+
+@router.delete("/{document_id}", status_code=202)
+async def delete_document(
+    document_id: str,
+    principal: Principal = Depends(require_principal),
+    registry=Depends(get_registry),
+    enqueue: Callable[..., Awaitable[None]] = Depends(get_enqueuer),
+):
+    record = registry.get(document_id, principal.tenant_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    registry.set_status(document_id, principal.tenant_id, DocumentStatus.DELETING)
+    await enqueue(document_id, "delete")
+    return {"document_id": document_id, "status": DocumentStatus.DELETING.value}
