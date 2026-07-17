@@ -47,8 +47,12 @@ class HybridRetriever:
 
     def retrieve(self, query: Query) -> list[ScoredChunk]:
         qvec = self.embedder.embed_query(query.text)
-        dense = self.vector_store.search(qvec, query.top_k, query.acl)
-        sparse = self.sparse.search(query.text, query.top_k, query.acl)
+        dense = self.vector_store.search(
+            qvec, query.top_k, query.acl, collection_id=query.collection_id
+        )
+        sparse = self.sparse.search(
+            query.text, query.top_k, query.acl, collection_id=query.collection_id
+        )
         fused = reciprocal_rank_fusion([dense, sparse], k=self.rrf_k)
         if not fused:
             return []

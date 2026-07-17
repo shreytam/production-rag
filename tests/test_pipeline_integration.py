@@ -57,10 +57,12 @@ class InMemoryVectorStore:
     def upsert(self, chunks):
         self.chunks.extend(chunks)
 
-    def search(self, embedding, top_k, acl: ACLContext):
+    def search(self, embedding, top_k, acl: ACLContext, *, collection_id: str | None = None):
         scored = []
         for c in self.chunks:
             if not acl.allows(c.acl):  # ACL applied before scoring
+                continue
+            if collection_id is not None and c.collection_id != collection_id:
                 continue
             sim = sum(a * b for a, b in zip(embedding, c.embedding or []))
             scored.append(ScoredChunk(chunk=c, score=sim, source=RetrievalSource.DENSE))
