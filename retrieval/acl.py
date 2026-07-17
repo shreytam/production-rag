@@ -2,7 +2,6 @@
 
 Three flavours matching each store's filtering API:
 - qdrant_filter  → qdrant_client.models.Filter  (pre-similarity payload filter)
-- pg_where       → (sql_fragment, params)        (pre-similarity WHERE clause)
 - acl_predicate  → Callable[[Chunk], bool]       (in-memory candidate filter)
 
 All three faithfully model ACLContext.allows():
@@ -66,28 +65,6 @@ def qdrant_filter(acl: ACLContext, *, collection_id: str | None = None) -> qm.Fi
         )
 
     return qm.Filter(must=must)
-
-
-def pg_where(acl: ACLContext, *, collection_id: str | None = None) -> tuple[str, list]:
-    """Return (sql_fragment, params) for a PostgreSQL WHERE clause.
-
-    Fragment:
-        tenant_id = %s AND (cardinality(acl_tags)=0 OR acl_tags && %s)
-        [AND collection_id = %s]   (only when collection_id is not None)
-
-    `&&` is the array-overlap operator; an empty caller tag array will
-    never overlap, so no-tag callers see only cardinality-0 (open) chunks —
-    matching allows() semantics exactly.
-
-    `collection_id=None` (the default) means "no collection filter" —
-    behaviour is unchanged from before this parameter existed.
-    """
-    fragment = "tenant_id = %s AND (cardinality(acl_tags)=0 OR acl_tags && %s)"
-    params: list = [acl.tenant_id, list(acl.acl_tags)]
-    if collection_id is not None:
-        fragment += " AND collection_id = %s"
-        params.append(collection_id)
-    return fragment, params
 
 
 def acl_predicate(acl: ACLContext, *, collection_id: str | None = None) -> Callable[[Chunk], bool]:

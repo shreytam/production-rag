@@ -373,9 +373,18 @@ git -c user.name="Shreytam Goyal" -c user.email="shreytamgoyal@gmail.com" commit
 
 ---
 
-### Task 5: pgvector store carries + filters `collection_id`
+### Task 5: Remove pgvector — Qdrant is the sole vector store
 
-**Files:**
+> **Superseded (mid-execution decision):** the product stack standardized on Qdrant
+> (vectors) + Redis (semantic cache). Rather than add `collection_id` to pgvector, the
+> pgvector backend is **removed entirely**: delete `providers/vectorstores/pgvector_store.py`,
+> drop the `"pgvector"` option from `core/config.py`'s `vector_store` Literal, remove the
+> `PgVectorStore` branch/import in `core/registry.py`, delete `pg_where` from
+> `retrieval/acl.py` (and its Task-2 test), and remove all pgvector-only tests. Keep the
+> Postgres *document registry* and `pg_dsn` (a separate subsystem). The original
+> pgvector-collection task text below is retained for history but does NOT apply.
+
+**Files (original — superseded):**
 - Modify: `providers/vectorstores/pgvector_store.py` (`ensure_collection` DDL, `upsert`, `search`)
 - Test: `tests/test_stores_acl.py` (live-gated pgvector collection case, mirroring Task 4)
 

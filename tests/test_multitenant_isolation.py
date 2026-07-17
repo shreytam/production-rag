@@ -1,7 +1,7 @@
 """Multi-tenant isolation: tenant A must never retrieve tenant B's documents.
 
 Proven at three layers — dense store, BM25, and the full hybrid pipeline — plus
-live Qdrant/pgvector when reachable. The decisive trick: tenant-B chunks are
+live Qdrant when reachable. The decisive trick: tenant-B chunks are
 written with text that strongly matches the query, so any leak is a real ACL
 failure, not an accident of ranking.
 """
@@ -117,27 +117,9 @@ def _qdrant_reachable(url: str) -> bool:
         return False
 
 
-def _pg_reachable(dsn: str) -> bool:
-    try:
-        import psycopg
-
-        with psycopg.connect(dsn, connect_timeout=2):
-            return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def test_qdrant_live_isolation(require_live_or_fail):
     from providers.vectorstores.qdrant_store import QdrantVectorStore
 
     s = get_settings().model_copy(update={"qdrant_collection": "rag_isolation_test"})
     require_live_or_fail(_qdrant_reachable(s.qdrant_url), "Qdrant")
     _live_isolation_check(QdrantVectorStore(s))  # bugs here FAIL, not skip
-
-
-def test_pgvector_live_isolation(require_live_or_fail):
-    from providers.vectorstores.pgvector_store import PgVectorStore
-
-    s = get_settings().model_copy(update={"pg_table": "rag_isolation_test"})
-    require_live_or_fail(_pg_reachable(s.pg_dsn), "Postgres")
-    _live_isolation_check(PgVectorStore(s))  # bugs here FAIL, not skip

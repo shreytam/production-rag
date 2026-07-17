@@ -8,7 +8,6 @@ implementation only fails when that specific component is requested.
 Contract for Wave 1 implementors — produce exactly these classes/constructors:
   Embedder:    providers.embedders.openai_compatible.OpenAICompatibleEmbedder(settings)
   VectorStore: providers.vectorstores.qdrant_store.QdrantVectorStore(settings)
-               providers.vectorstores.pgvector_store.PgVectorStore(settings)
   Sparse:      providers.sparse.bm25.BM25Retriever()
   Reranker:    providers.rerankers.local_cross_encoder.LocalCrossEncoderReranker(model)
                providers.rerankers.nim_rerank.NIMReranker(model, base_url, api_key)
@@ -39,10 +38,6 @@ def build_vector_store(settings: Settings | None = None) -> VectorStore:
         from providers.vectorstores.qdrant_store import QdrantVectorStore
 
         return QdrantVectorStore(s)
-    if s.vector_store == "pgvector":
-        from providers.vectorstores.pgvector_store import PgVectorStore
-
-        return PgVectorStore(s)
     raise ValueError(f"Unknown vector_store: {s.vector_store}")
 
 

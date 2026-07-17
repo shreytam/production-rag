@@ -1,6 +1,6 @@
 # tests/test_acl_collection_filter.py
 from core.types import ACLContext, Chunk
-from retrieval.acl import acl_predicate, pg_where, qdrant_filter
+from retrieval.acl import acl_predicate, qdrant_filter
 
 
 def _chunk(collection_id):
@@ -14,15 +14,6 @@ def test_acl_predicate_collection_filter():
     assert pred(_chunk("B")) is False
     # No collection filter => collection ignored
     assert acl_predicate(acl)(_chunk("B")) is True
-
-
-def test_pg_where_appends_collection():
-    frag, params = pg_where(ACLContext(tenant_id="t"), collection_id="A")
-    assert "collection_id = %s" in frag
-    assert params[-1] == "A"
-    # None => no collection clause
-    frag2, _ = pg_where(ACLContext(tenant_id="t"))
-    assert "collection_id" not in frag2
 
 
 def test_qdrant_filter_appends_collection():
