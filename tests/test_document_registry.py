@@ -34,3 +34,21 @@ def test_list_scoped_to_tenant():
     reg.create(_rec("d1", "t1"))
     reg.create(_rec("d2", "t2"))
     assert [r.document_id for r in reg.list("t1")] == ["d1"]
+
+
+def _rec_with_collection(did, tenant="t", col=""):
+    return DocumentRecord(document_id=did, tenant_id=tenant, filename="f",
+                          content_type="text/plain", size_bytes=1,
+                          status=DocumentStatus.PROCESSING, blob_key="k", collection_id=col)
+
+
+def test_delete_is_tenant_scoped_and_idempotent():
+    reg = InMemoryDocumentRegistry()
+    reg.create(_rec_with_collection("d1", "t1", col="A"))
+    # cross-tenant delete is a no-op
+    reg.delete("d1", "other")
+    assert reg.get("d1", "t1") is not None
+    assert reg.get("d1", "t1").collection_id == "A"
+    reg.delete("d1", "t1")
+    assert reg.get("d1", "t1") is None
+    reg.delete("d1", "t1")  # idempotent

@@ -29,3 +29,8 @@ class InMemoryDocumentRegistry:
             return
         self._rows[document_id] = r.model_copy(
             update={"status": status, "error": error, "chunk_count": chunk_count})
+
+    def delete(self, document_id: str, tenant_id: str) -> None:
+        r = self._rows.get(document_id)
+        if r is not None and r.tenant_id == tenant_id:
+            self._rows.pop(document_id, None)
