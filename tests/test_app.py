@@ -47,7 +47,8 @@ class FakePipeline:
     def __init__(self):
         self.calls: list[tuple[str, ACLContext]] = []
 
-    def run(self, question: str, acl: ACLContext | None = None) -> dict[str, Any]:
+    def run(self, question: str, acl: ACLContext | None = None, *,
+            collection_id: str | None = None) -> dict[str, Any]:
         self.calls.append((question, acl))
         return {
             "answer": CANNED_ANSWER,
