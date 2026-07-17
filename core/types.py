@@ -242,3 +242,21 @@ class DocManifest(BaseModel):
     prompt_version: str = "v1"
     chunks: dict[str, ChunkRecord] = Field(default_factory=dict)
 
+
+class DocumentStatus(str, Enum):
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class DocumentRecord(BaseModel):
+    document_id: str
+    tenant_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    status: DocumentStatus
+    blob_key: str
+    error: str = ""
+    chunk_count: int = 0
+

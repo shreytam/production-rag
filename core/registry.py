@@ -190,3 +190,14 @@ def build_parser_registry(settings: Settings | None = None):
     allowed = {t.strip() for t in s.ingest_allowed_types.split(",") if t.strip()}
     return ParserRegistry(allowed_types=allowed, max_bytes=s.max_upload_bytes)
 
+
+def build_document_registry(settings: Settings | None = None):
+    s = settings or get_settings()
+    if s.doc_registry_backend == "memory":
+        from providers.docstore.memory import InMemoryDocumentRegistry
+
+        return InMemoryDocumentRegistry()
+    from providers.docstore.postgres import PostgresDocumentRegistry
+
+    return PostgresDocumentRegistry(s.pg_dsn, s.doc_registry_table)
+

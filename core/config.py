@@ -172,6 +172,8 @@ class Settings(BaseSettings):
     )
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MiB
     blob_store_root: str = ".cache/uploads"
+    doc_registry_backend: Literal["memory", "postgres"] = "postgres"
+    doc_registry_table: str = "documents"
 
     @model_validator(mode="after")
     def _apply_llm_router(self) -> "Settings":
