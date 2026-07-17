@@ -8,8 +8,9 @@ class LocalDiskBlobStore:
         self._root = Path(root)
 
     def _path(self, key: str) -> Path:
+        root = self._root.resolve()
         p = (self._root / key).resolve()
-        if not str(p).startswith(str(self._root.resolve())):
+        if p != root and not p.is_relative_to(root):
             raise KeyError(f"illegal blob key: {key}")  # path traversal guard
         return p
 
