@@ -46,6 +46,8 @@ def run_ingest(deps: IngestDeps, document_id: str) -> None:
         raw = deps.blobs.get(rec.blob_key)
         docs = parser.parse(raw, rec.filename, rec.content_type,
                             doc_id=document_id, tenant_id=tenant_id, acl_tags=())
+        if rec.collection_id:
+            docs = [d.model_copy(update={"collection_id": rec.collection_id}) for d in docs]
         clean_docs, detector, audit = _pii_process(docs, deps.settings, tenant_id)
 
         chunks = []
@@ -63,6 +65,26 @@ def run_ingest(deps: IngestDeps, document_id: str) -> None:
         deps.registry.set_status(document_id, tenant_id, DocumentStatus.READY, chunk_count=n)
     except Exception as e:  # fail-closed
         logger.exception("ingest failed for %s", document_id)
+        deps.registry.set_status(document_id, tenant_id, DocumentStatus.FAILED,
+                                 error=type(e).__name__)
+
+
+def run_delete(deps: IngestDeps, document_id: str) -> None:
+    """Pure delete body: purge chunks (dense+sparse) + manifest + blob, then the
+    registry row LAST. Fail-closed: an error marks the doc `failed`, never a
+    half-deleted ghost. Every underlying delete is idempotent, so retry is safe."""
+    rec = deps.registry.get_privileged(document_id)
+    if rec is None:
+        logger.info("delete: document %s already gone", document_id)
+        return
+    tenant_id = rec.tenant_id
+    acl = ACLContext(tenant_id=tenant_id, acl_tags=())
+    try:
+        deps.ingestor.delete_document(tenant_id, document_id, acl)
+        deps.blobs.delete(rec.blob_key)
+        deps.registry.delete(document_id, tenant_id)
+    except Exception as e:  # fail-closed
+        logger.exception("delete failed for %s", document_id)
         deps.registry.set_status(document_id, tenant_id, DocumentStatus.FAILED,
                                  error=type(e).__name__)
 
@@ -89,6 +111,16 @@ async def ingest_document(ctx, document_id: str) -> None:
     run_ingest(deps, document_id)
 
 
+async def delete_document(ctx, document_id: str) -> None:
+    """arq task entrypoint for async document deletion."""
+    deps = ctx.get("deps")
+    if deps is None:
+        from core.config import get_settings
+        deps = _build_deps(get_settings())
+        ctx["deps"] = deps
+    run_delete(deps, document_id)
+
+
 try:
     from arq.connections import RedisSettings as _RedisSettings
 except ModuleNotFoundError:  # arq ships in the 'app' extra; the base test env omits it
@@ -108,7 +140,7 @@ class WorkerSettings:
     dependency-free for unit tests that drive ``run_ingest`` directly.
     """
 
-    functions = [ingest_document]
+    functions = [ingest_document, delete_document]
 
     if _RedisSettings is not None:
         redis_settings = _RedisSettings.from_dsn(get_settings().redis_url)
