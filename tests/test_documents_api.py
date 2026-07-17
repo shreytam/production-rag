@@ -89,6 +89,12 @@ def test_list_documents_tenant_scoped_and_filterable(client):
     assert [d["document_id"] for d in only_a] == [a]
     assert all(d["collection_id"] == "A" for d in only_a)
 
+    # Switch principal to another tenant -> t1's documents must not leak
+    from app.auth import require_principal
+    app.dependency_overrides[require_principal] = lambda: Principal(tenant_id="other")
+    assert client.get("/documents").json() == []
+    assert client.get("/documents", params={"collection_id": "A"}).json() == []
+
 
 def test_upload_rejects_bad_collection_id(client):
     r = client.post("/documents", data={"collection_id": "x" * 200},
