@@ -171,6 +171,7 @@ class Settings(BaseSettings):
         "text/html"
     )
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MiB
+    blob_store_root: str = ".cache/uploads"
 
     @model_validator(mode="after")
     def _apply_llm_router(self) -> "Settings":

@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Literal
 
 from core.config import Settings, get_settings
-from core.interfaces import Embedder, Generator, ManifestStore, Reranker, SparseRetriever, VectorStore, PIIDetector
+from core.interfaces import Embedder, Generator, ManifestStore, Reranker, SparseRetriever, VectorStore, PIIDetector, BlobStore
 
 GeneratorRole = Literal["gen", "context", "judge"]
 
@@ -174,6 +174,13 @@ def build_incremental_ingestor(settings: Settings | None = None):
         build_tenant_sparse_store(s),
         build_manifest_store(s),
     )
+
+
+def build_blob_store(settings: Settings | None = None) -> BlobStore:
+    s = settings or get_settings()
+    from providers.blobstore.local_disk import LocalDiskBlobStore
+
+    return LocalDiskBlobStore(root=s.blob_store_root)
 
 
 def build_parser_registry(settings: Settings | None = None):
