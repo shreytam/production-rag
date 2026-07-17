@@ -70,3 +70,14 @@ class IncrementalIngestor:
             prompt_version=_PROMPT_VERSION, chunks=new_records,
         ))
         return len(new_records)
+
+    def delete_document(self, tenant_id: str, doc_id: str, acl: ACLContext) -> int:
+        old = self._manifest.load(tenant_id, doc_id)
+        if old is None:
+            return 0
+        chunk_ids = list(old.chunks.keys())
+        if chunk_ids:
+            self._store.delete(chunk_ids, acl)
+            self._sparse.delete(chunk_ids, acl)
+        self._manifest.delete(tenant_id, doc_id)
+        return len(chunk_ids)
