@@ -205,6 +205,7 @@ def get_document(
         "size_bytes": record.size_bytes,
         "status": record.status.value,
         "chunk_count": record.chunk_count,
+        "collection_id": record.collection_id,
         "error": record.error,
     }
 

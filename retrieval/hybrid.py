@@ -23,7 +23,8 @@ class DenseRetriever:
 
     def retrieve(self, query: Query) -> list[ScoredChunk]:
         qvec = self.embedder.embed_query(query.text)
-        return self.vector_store.search(qvec, query.top_k, query.acl)
+        return self.vector_store.search(qvec, query.top_k, query.acl,
+                                        collection_id=query.collection_id)
 
 
 class HybridRetriever:
