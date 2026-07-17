@@ -163,3 +163,15 @@ def build_manifest_store(settings: Settings | None = None) -> ManifestStore:
 
     return JsonlManifestStore(manifest_dir=s.manifest_dir)
 
+
+def build_incremental_ingestor(settings: Settings | None = None):
+    s = settings or get_settings()
+    from ingest.incremental import IncrementalIngestor
+
+    return IncrementalIngestor(
+        build_embedder(s),
+        build_vector_store(s),
+        build_tenant_sparse_store(s),
+        build_manifest_store(s),
+    )
+
