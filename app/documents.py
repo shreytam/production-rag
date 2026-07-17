@@ -17,13 +17,23 @@ import hashlib
 import uuid
 from collections.abc import Awaitable, Callable
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import Query as QueryParam
 
 from app.auth import require_principal
 from core.types import DocumentRecord, DocumentStatus, Principal
 from ingest.parsers.base import ParserError, ParserRegistry
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+_MAX_COLLECTION_ID = 128
+
+
+def _validate_collection_id(value: str) -> str:
+    """Reject collection ids that are too long or contain control characters."""
+    if len(value) > _MAX_COLLECTION_ID or any(ord(ch) < 32 for ch in value):
+        raise HTTPException(status_code=422, detail="invalid collection_id")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +116,15 @@ def _blob_key(tenant_id: str, document_id: str) -> str:
 @router.post("", status_code=202)
 async def upload_document(
     file: UploadFile = File(...),
+    collection_id: str = Form(""),
     principal: Principal = Depends(require_principal),
     registry=Depends(get_registry),
     blobs=Depends(get_blobs),
     parsers: ParserRegistry = Depends(get_parsers),
     enqueue: Callable[[str], Awaitable[None]] = Depends(get_enqueuer),
 ):
+    collection_id = _validate_collection_id(collection_id)
+
     content_type = file.content_type or "application/octet-stream"
 
     # Reject unsupported types before reading the body (415).
@@ -142,11 +155,36 @@ async def upload_document(
             size_bytes=len(raw),
             status=DocumentStatus.PROCESSING,
             blob_key=blob_key,
+            collection_id=collection_id,
         )
     )
     await enqueue(document_id)
 
     return {"document_id": document_id, "status": DocumentStatus.PROCESSING.value}
+
+
+@router.get("")
+def list_documents(
+    collection_id: str | None = QueryParam(default=None),
+    principal: Principal = Depends(require_principal),
+    registry=Depends(get_registry),
+):
+    records = registry.list(principal.tenant_id)
+    if collection_id is not None:
+        records = [r for r in records if r.collection_id == collection_id]
+    return [
+        {
+            "document_id": r.document_id,
+            "filename": r.filename,
+            "content_type": r.content_type,
+            "size_bytes": r.size_bytes,
+            "status": r.status.value,
+            "chunk_count": r.chunk_count,
+            "collection_id": r.collection_id,
+            "error": r.error,
+        }
+        for r in records
+    ]
 
 
 @router.get("/{document_id}")

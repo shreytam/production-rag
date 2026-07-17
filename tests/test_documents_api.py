@@ -67,3 +67,30 @@ def test_get_status_is_tenant_scoped(client):
     from app.auth import require_principal
     app.dependency_overrides[require_principal] = lambda: Principal(tenant_id="other")
     assert client.get(f"/documents/{did}").status_code == 404
+
+
+def test_upload_stores_collection_id(client):
+    r = client.post("/documents",
+                    data={"collection_id": "projX"},
+                    files={"file": ("n.txt", b"hi", "text/plain")})
+    assert r.status_code == 202
+    did = r.json()["document_id"]
+    assert client.registry.get(did, "t1").collection_id == "projX"
+
+
+def test_list_documents_tenant_scoped_and_filterable(client):
+    a = client.post("/documents", data={"collection_id": "A"},
+                    files={"file": ("a.txt", b"a", "text/plain")}).json()["document_id"]
+    client.post("/documents", data={"collection_id": "B"},
+                files={"file": ("b.txt", b"b", "text/plain")})
+    all_docs = client.get("/documents").json()
+    assert {d["document_id"] for d in all_docs} >= {a}
+    only_a = client.get("/documents", params={"collection_id": "A"}).json()
+    assert [d["document_id"] for d in only_a] == [a]
+    assert all(d["collection_id"] == "A" for d in only_a)
+
+
+def test_upload_rejects_bad_collection_id(client):
+    r = client.post("/documents", data={"collection_id": "x" * 200},
+                    files={"file": ("n.txt", b"hi", "text/plain")})
+    assert r.status_code == 422
