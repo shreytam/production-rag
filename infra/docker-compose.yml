@@ -6,7 +6,9 @@
 #
 # Usage:
 #   docker compose -f infra/docker-compose.yml up -d                 # everything
-#   docker compose -f infra/docker-compose.yml up -d qdrant postgres # app only
+#   docker compose -f infra/docker-compose.yml up -d qdrant postgres # query path only
+#   # async ingest path (backends + arq worker); run the API on the host:
+#   docker compose -f infra/docker-compose.yml up -d qdrant postgres redis ingest-worker
 #
 # Secrets below are DEV-ONLY defaults for a local machine. Do not reuse them in
 # any shared/production deployment. Langfuse self-host docs:
@@ -37,6 +39,46 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # ── App: async ingest worker (arq) ─────────────────────────────────────────
+  # Drains the `POST /documents` jobs the API enqueues and runs the ingest
+  # pipeline (parse → PII → chunk → embed → dense+sparse). Shares on-disk state
+  # (blobs / per-tenant sparse index / manifest under .cache) with a host-run API
+  # through the repo bind-mount, and the document registry through postgres. Model
+  # keys (EMBED_*/CONTEXT_*) are read from the mounted .env like any host process.
+  #
+  # Dev-only pattern: run straight from the uv image, syncing deps on start into a
+  # cached named volume. A baked application image belongs to SP9 (deployability).
+  #
+  #   docker compose -f infra/docker-compose.yml up -d qdrant postgres redis ingest-worker
+  ingest-worker:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    restart: unless-stopped
+    working_dir: /workspace
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    environment:
+      # Keep the container's venv OFF the bind-mounted repo so the host's macOS
+      # .venv is never used inside Linux; cache it in a named volume across restarts.
+      UV_PROJECT_ENVIRONMENT: /opt/venv
+      # In-cluster service DNS. The host-published ports (localhost:*) are for
+      # processes on the host; from inside compose we address services by name.
+      REDIS_URL: "redis://:dev-redis-change-me@redis:6379"
+      QDRANT_URL: "http://qdrant:6333"
+      PG_DSN: "postgresql://rag:rag@postgres:5432/rag"
+      # The registry MUST be shared with the API, so it cannot be the in-memory
+      # backend — pin it to postgres (the table is auto-created on first use).
+      DOC_REGISTRY_BACKEND: postgres
+    volumes:
+      - ../:/workspace                 # source + shared .cache (blobs/sparse/manifest)
+      - ingest_worker_venv:/opt/venv   # Linux venv, isolated from the host .venv
+    command: >
+      sh -c "uv sync --extra app --frozen && exec uv run --no-sync arq ingest.worker.WorkerSettings"
 
   # ── Langfuse v3 stack ──────────────────────────────────────────────────────
   langfuse-worker:
@@ -191,6 +233,7 @@ services:
 volumes:
   qdrant_storage:
   pgdata:
+  ingest_worker_venv:
   langfuse_pgdata:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:

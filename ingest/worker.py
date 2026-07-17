@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from core.config import Settings
+from core.config import Settings, get_settings
 from core.types import ACLContext, DocumentStatus
 from ingest.chunking import chunk_document
 
@@ -89,13 +89,26 @@ async def ingest_document(ctx, document_id: str) -> None:
     run_ingest(deps, document_id)
 
 
+try:
+    from arq.connections import RedisSettings as _RedisSettings
+except ModuleNotFoundError:  # arq ships in the 'app' extra; the base test env omits it
+    _RedisSettings = None
+
+
 class WorkerSettings:
-    """arq worker configuration (see `arq ingest.worker.WorkerSettings`)."""
+    """arq worker configuration. Run it with:
+
+        arq ingest.worker.WorkerSettings
+
+    `redis_settings` MUST be a concrete ``RedisSettings`` in the class body: arq's
+    ``get_kwargs`` copies attributes straight out of the class ``__dict__`` into the
+    ``Worker`` (it does not call them), so a method/property is passed through
+    uninterpreted and pool creation fails. It is only materialised when arq is
+    importable — i.e. the worker image — which keeps ``import ingest.worker``
+    dependency-free for unit tests that drive ``run_ingest`` directly.
+    """
+
     functions = [ingest_document]
 
-    @staticmethod
-    def redis_settings():
-        from arq.connections import RedisSettings
-        from core.config import get_settings
-        s = get_settings()
-        return RedisSettings.from_dsn(s.redis_url)
+    if _RedisSettings is not None:
+        redis_settings = _RedisSettings.from_dsn(get_settings().redis_url)
