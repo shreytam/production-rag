@@ -77,6 +77,7 @@ class Document(BaseModel):
     text: str
     tenant_id: str
     acl_tags: tuple[str, ...] = ()
+    collection_id: str = ""
     title: str | None = None
     source: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -90,6 +91,7 @@ class Chunk(BaseModel):
     text: str
     tenant_id: str
     acl_tags: tuple[str, ...] = ()
+    collection_id: str = ""
     ordinal: int = 0
     title: str | None = None
     source: str | None = None
@@ -138,6 +140,7 @@ class Query(BaseModel):
     acl: ACLContext
     top_k: int = 20
     rerank_top_n: int = 8
+    collection_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -247,6 +250,7 @@ class DocumentStatus(str, Enum):
     PROCESSING = "processing"
     READY = "ready"
     FAILED = "failed"
+    DELETING = "deleting"
 
 
 class DocumentRecord(BaseModel):
@@ -257,6 +261,7 @@ class DocumentRecord(BaseModel):
     size_bytes: int
     status: DocumentStatus
     blob_key: str
+    collection_id: str = ""
     error: str = ""
     chunk_count: int = 0
 
