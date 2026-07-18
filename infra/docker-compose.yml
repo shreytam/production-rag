@@ -1,6 +1,6 @@
 # Local dev backends for Production RAG.
 #
-#   App stack:   qdrant + postgres (pgvector)
+#   App stack:   qdrant (vector store) + postgres (document registry)
 #   Langfuse v3: langfuse-web + langfuse-worker + langfuse-db + clickhouse
 #                + redis + minio   (the single-container v2 image is gone)
 #
@@ -15,7 +15,7 @@
 #   https://langfuse.com/self-hosting/docker-compose
 
 services:
-  # ── App: vector store + relational store ───────────────────────────────────
+  # ── App: vector store (qdrant) + relational store (postgres document registry)
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -96,7 +96,7 @@ services:
     ports:
       - "127.0.0.1:3030:3030"
     environment: &langfuse-worker-env
-      # Postgres (dedicated to Langfuse — separate from the app's pgvector DB)
+      # Postgres (dedicated to Langfuse — separate from the app's Postgres DB)
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
       SALT: dev-salt-change-me
       # 64 hex chars (dev only). Prod: `openssl rand -hex 32`.
@@ -163,7 +163,7 @@ services:
       TZ: UTC
       PGTZ: UTC
     ports:
-      - "127.0.0.1:5433:5432"   # 5432 is taken by the app's pgvector postgres
+      - "127.0.0.1:5433:5432"   # 5432 is taken by the app's postgres (document registry)
     volumes:
       - langfuse_pgdata:/var/lib/postgresql/data
     healthcheck:

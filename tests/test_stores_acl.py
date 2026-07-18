@@ -2,11 +2,10 @@
 
 Offline (always run):
   - BM25 ACL isolation: cross-tenant chunks never returned; tag scoping respected.
-  - Filter builder unit tests: qdrant_filter, pg_where, acl_predicate.
+  - Filter builder unit tests: qdrant_filter, acl_predicate.
 
 Live (skipped if server unreachable):
   - QdrantVectorStore round-trip: upsert + search + ACL isolation.
-  - PgVectorStore round-trip: upsert + search + ACL isolation.
 """
 
 from __future__ import annotations
@@ -216,44 +215,6 @@ class TestQdrantFilterBuilder:
         assert set(tag_conds[0].match.any) == {"admin", "reader"}
 
 
-class TestPgWhereBuilder:
-    """Unit tests for pg_where() — no server required."""
-
-    def test_returns_tuple(self):
-        from retrieval.acl import pg_where
-
-        result = pg_where(ACLContext(tenant_id="t1"))
-        assert isinstance(result, tuple) and len(result) == 2
-
-    def test_fragment_content(self):
-        from retrieval.acl import pg_where
-
-        fragment, params = pg_where(ACLContext(tenant_id="t1", acl_tags=("tag_a",)))
-        assert "tenant_id = %s" in fragment
-        assert "cardinality(acl_tags)=0" in fragment
-        assert "acl_tags && %s" in fragment
-
-    def test_params_tenant_first(self):
-        from retrieval.acl import pg_where
-
-        fragment, params = pg_where(ACLContext(tenant_id="my_tenant", acl_tags=("x",)))
-        assert params[0] == "my_tenant"
-        assert "x" in params[1]
-
-    def test_params_empty_tags(self):
-        from retrieval.acl import pg_where
-
-        fragment, params = pg_where(ACLContext(tenant_id="t"))
-        assert params[1] == []
-
-    def test_exact_fragment(self):
-        """Fragment matches the documented form exactly."""
-        from retrieval.acl import pg_where
-
-        fragment, params = pg_where(ACLContext(tenant_id="t"))
-        assert fragment == "tenant_id = %s AND (cardinality(acl_tags)=0 OR acl_tags && %s)"
-
-
 class TestAclPredicate:
     """Unit tests for acl_predicate() — no server required."""
 
@@ -416,93 +377,30 @@ class TestQdrantVectorStoreLive:
         for sc in results:
             assert sc.source == RetrievalSource.DENSE
 
+    def _chunk(self, chunk_id: str, *, tenant: str, collection_id: str, text: str) -> Chunk:
+        """Build an embedded Chunk with the given collection_id (mirrors _dummy_chunks_for_live)."""
+        return Chunk(
+            chunk_id=chunk_id,
+            doc_id=f"doc-{chunk_id}",
+            tenant_id=tenant,
+            collection_id=collection_id,
+            text=text,
+            embedding=self.embed(text),
+        )
 
-class TestPgVectorStoreLive:
-    """Round-trip tests against a live PostgreSQL + pgvector server."""
+    def embed(self, text: str) -> list[float]:
+        """Deterministic tiny embedding for tests: hash text into a unit-ish vector."""
+        v = [0.0] * DIM
+        for i, ch in enumerate(text):
+            v[i % DIM] += ord(ch)
+        norm = math.sqrt(sum(x * x for x in v)) or 1.0
+        return [x / norm for x in v]
 
-    TABLE = "test_acl_pg"
-
-    @pytest.fixture(autouse=True)
-    def skip_if_offline(self, require_live_or_fail):
-        """Skip the entire class if Postgres is unreachable."""
-        reachable = True
-        try:
-            import psycopg
-            conn = psycopg.connect("postgresql://rag:rag@localhost:5432/rag", connect_timeout=2)
-            conn.close()
-        except Exception:
-            reachable = False
-
-        require_live_or_fail(reachable, "Postgres")
-
-    @pytest.fixture
-    def store(self):
-        from core.config import Settings
-        from providers.vectorstores.pgvector_store import PgVectorStore
-        import psycopg
-
-        settings = Settings(pg_table=self.TABLE)
-        store = PgVectorStore(settings)
-
-        # Drop and recreate for a clean slate
-        conn = psycopg.connect(settings.pg_dsn)
-        with conn.cursor() as cur:
-            cur.execute(f"DROP TABLE IF EXISTS {self.TABLE}")
-        conn.commit()
-        conn.close()
-
-        store.ensure_collection(dimension=DIM)
-        return store
-
-    def test_upsert_and_search_returns_own_tenant(self, store):
-        chunks = _dummy_chunks_for_live("pa", "pb")
-        store.upsert(chunks)
-
-        acl = ACLContext(tenant_id="pa")
-        results = store.search(_unit_vec(DIM, 0), top_k=10, acl=acl)
-        assert results, "Should find at least one chunk"
-        for sc in results:
-            assert sc.chunk.tenant_id == "pa"
-
-    def test_search_returns_zero_cross_tenant(self, store):
-        chunks = _dummy_chunks_for_live("pa", "pb")
-        store.upsert(chunks)
-
-        acl = ACLContext(tenant_id="pa")
-        results = store.search(_unit_vec(DIM, 0), top_k=10, acl=acl)
-        ids = {sc.chunk.chunk_id for sc in results}
-        assert "live-b1" not in ids, "Cross-tenant chunk must not appear in tenant_a results"
-
-    def test_tag_scoped_hidden_from_untagged_caller(self, store):
-        chunks = _dummy_chunks_for_live("pa", "pb")
-        store.upsert(chunks)
-
-        acl = ACLContext(tenant_id="pa")  # no tags
-        results = store.search(_unit_vec(DIM, 1), top_k=10, acl=acl)
-        ids = {sc.chunk.chunk_id for sc in results}
-        assert "live-a2" not in ids
-
-    def test_tag_scoped_visible_to_tagged_caller(self, store):
-        chunks = _dummy_chunks_for_live("pa", "pb")
-        store.upsert(chunks)
-
-        acl = ACLContext(tenant_id="pa", acl_tags=("secret",))
-        results = store.search(_unit_vec(DIM, 1), top_k=10, acl=acl)
-        ids = {sc.chunk.chunk_id for sc in results}
-        assert "live-a2" in ids
-
-    def test_count_with_acl(self, store):
-        chunks = _dummy_chunks_for_live("pa", "pb")
-        store.upsert(chunks)
-
-        count_a = store.count(ACLContext(tenant_id="pa"))
-        count_total = store.count()
-        assert count_a >= 1
-        assert count_total >= count_a
-
-    def test_dense_source_label(self, store):
-        chunks = _dummy_chunks_for_live("pa", "pb")
-        store.upsert(chunks)
-        results = store.search(_unit_vec(DIM, 0), top_k=5, acl=ACLContext(tenant_id="pa"))
-        for sc in results:
-            assert sc.source == RetrievalSource.DENSE
+    def test_collection_scoping(self, store):
+        from core.types import ACLContext
+        a = self._chunk("cola", tenant="t", collection_id="A", text="shared alpha")
+        b = self._chunk("colb", tenant="t", collection_id="B", text="shared beta")
+        store.upsert([a, b])
+        acl = ACLContext(tenant_id="t")
+        hits = store.search(self.embed("shared"), 5, acl, collection_id="A")
+        assert {h.chunk.chunk_id for h in hits} == {"cola"}

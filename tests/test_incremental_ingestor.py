@@ -39,3 +39,21 @@ def test_removed_chunk_is_deleted(tmp_path):
     ing.ingest_document("t1", "d1", [_c("d1::0", 0, "a")], acl)  # d1::1 dropped
     ids = {c.chunk_id for c in ing._store.chunks}
     assert ids == {"d1::0"}
+
+
+def _d(doc, ordinal, text="x"):
+    return Chunk(chunk_id=f"{doc}::{ordinal}", doc_id=doc, text=text, tenant_id="t")
+
+
+def test_delete_document_removes_only_that_doc(tmp_path):
+    store, sparse = InMemoryVectorStore(), BM25Retriever()
+    ing = IncrementalIngestor(FakeEmbedder(), store, sparse, JsonlManifestStore(str(tmp_path)))
+    acl = ACLContext(tenant_id="t")
+    ing.ingest_document("t", "d1", [_d("d1", 0), _d("d1", 1)], acl)
+    ing.ingest_document("t", "d2", [_d("d2", 0)], acl)
+
+    n = ing.delete_document("t", "d2", acl)
+    assert n == 1
+    assert {c.doc_id for c in store.chunks} == {"d1"}
+    # idempotent: deleting an absent doc is a clean no-op
+    assert ing.delete_document("t", "gone", acl) == 0

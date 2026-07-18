@@ -124,6 +124,7 @@ def chunk_document(
                 text=text,
                 tenant_id=doc.tenant_id,
                 acl_tags=doc.acl_tags,
+                collection_id=doc.collection_id,
                 ordinal=ordinal,
                 title=doc.title,
                 source=doc.source,

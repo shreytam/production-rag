@@ -84,7 +84,13 @@ class RAGPipeline:
             },
         )
 
-    def answer(self, question: str, acl: ACLContext | None = None) -> Answer:
+    def answer(
+        self,
+        question: str,
+        acl: ACLContext | None = None,
+        *,
+        collection_id: str | None = None,
+    ) -> Answer:
         acl = acl or self.default_acl
 
         latencies: dict[str, float] = {}
@@ -129,6 +135,7 @@ class RAGPipeline:
                 acl=acl,
                 top_k=self.settings.retrieve_top_k,
                 rerank_top_n=self.settings.rerank_top_n,
+                collection_id=collection_id,
             )
 
             with self.tracer.span("retrieval", top_k=q.top_k) as s_ret:
@@ -227,8 +234,14 @@ class RAGPipeline:
                     r.pop("metadata", None)
         return ans
 
-    def run(self, question: str, acl: ACLContext | None = None) -> dict[str, Any]:
-        ans = self.answer(question, acl)
+    def run(
+        self,
+        question: str,
+        acl: ACLContext | None = None,
+        *,
+        collection_id: str | None = None,
+    ) -> dict[str, Any]:
+        ans = self.answer(question, acl, collection_id=collection_id)
         return {
             "answer": ans.text,
             "retrieved_ids": ans.metadata.get("retrieved_doc_ids", []),

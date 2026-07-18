@@ -26,7 +26,7 @@ def client():
     app.dependency_overrides[docs_mod.get_blobs] = lambda: blobs
     app.dependency_overrides[docs_mod.get_parsers] = lambda: parsers
 
-    async def fake_enqueue(document_id): enqueued.append(document_id)
+    async def fake_enqueue(document_id, action="ingest"): enqueued.append((document_id, action))
     app.dependency_overrides[docs_mod.get_enqueuer] = lambda: fake_enqueue
 
     from app.auth import require_principal
@@ -44,7 +44,7 @@ def test_upload_returns_202_and_enqueues(client):
     assert r.status_code == 202
     body = r.json()
     assert body["status"] == "processing"
-    assert client.enqueued == [body["document_id"]]
+    assert client.enqueued == [(body["document_id"], "ingest")]
 
 
 def test_upload_rejects_disallowed_type(client):
@@ -67,3 +67,52 @@ def test_get_status_is_tenant_scoped(client):
     from app.auth import require_principal
     app.dependency_overrides[require_principal] = lambda: Principal(tenant_id="other")
     assert client.get(f"/documents/{did}").status_code == 404
+
+
+def test_upload_stores_collection_id(client):
+    r = client.post("/documents",
+                    data={"collection_id": "projX"},
+                    files={"file": ("n.txt", b"hi", "text/plain")})
+    assert r.status_code == 202
+    did = r.json()["document_id"]
+    assert client.registry.get(did, "t1").collection_id == "projX"
+
+
+def test_list_documents_tenant_scoped_and_filterable(client):
+    a = client.post("/documents", data={"collection_id": "A"},
+                    files={"file": ("a.txt", b"a", "text/plain")}).json()["document_id"]
+    client.post("/documents", data={"collection_id": "B"},
+                files={"file": ("b.txt", b"b", "text/plain")})
+    all_docs = client.get("/documents").json()
+    assert {d["document_id"] for d in all_docs} >= {a}
+    only_a = client.get("/documents", params={"collection_id": "A"}).json()
+    assert [d["document_id"] for d in only_a] == [a]
+    assert all(d["collection_id"] == "A" for d in only_a)
+
+    # Switch principal to another tenant -> t1's documents must not leak
+    from app.auth import require_principal
+    app.dependency_overrides[require_principal] = lambda: Principal(tenant_id="other")
+    assert client.get("/documents").json() == []
+    assert client.get("/documents", params={"collection_id": "A"}).json() == []
+
+
+def test_upload_rejects_bad_collection_id(client):
+    r = client.post("/documents", data={"collection_id": "x" * 200},
+                    files={"file": ("n.txt", b"hi", "text/plain")})
+    assert r.status_code == 422
+
+
+def test_delete_marks_deleting_and_enqueues(client):
+    did = client.post("/documents", files={"file": ("n.txt", b"hi", "text/plain")}).json()["document_id"]
+    client.enqueued.clear()
+    r = client.delete(f"/documents/{did}")
+    assert r.status_code == 202
+    assert client.registry.get(did, "t1").status.value == "deleting"
+    assert client.enqueued == [(did, "delete")]
+
+
+def test_delete_cross_tenant_is_404(client):
+    did = client.post("/documents", files={"file": ("n.txt", b"hi", "text/plain")}).json()["document_id"]
+    from app.auth import require_principal
+    app.dependency_overrides[require_principal] = lambda: Principal(tenant_id="other")
+    assert client.delete(f"/documents/{did}").status_code == 404

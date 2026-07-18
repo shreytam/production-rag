@@ -30,6 +30,7 @@ def _payload_from_chunk(chunk: Chunk) -> dict[str, Any]:
         "chunk_id": chunk.chunk_id,
         "doc_id": chunk.doc_id,
         "tenant_id": chunk.tenant_id,
+        "collection_id": chunk.collection_id,
         "acl_tags": list(chunk.acl_tags),
         "acl_open": not bool(chunk.acl_tags),  # True when chunk has no tags
         "text": chunk.text,
@@ -46,6 +47,7 @@ def _chunk_from_payload(payload: dict[str, Any]) -> Chunk:
         chunk_id=payload["chunk_id"],
         doc_id=payload["doc_id"],
         tenant_id=payload["tenant_id"],
+        collection_id=payload.get("collection_id", ""),
         acl_tags=tuple(payload.get("acl_tags") or []),
         text=payload["text"],
         ordinal=payload.get("ordinal", 0),
@@ -92,6 +94,17 @@ class QdrantVectorStore:
             # Already exists — tolerate
             pass
 
+        # Payload index on collection_id for fast filtering
+        try:
+            self._client.create_payload_index(
+                collection_name=self._collection,
+                field_name="collection_id",
+                field_schema=qm.PayloadSchemaType.KEYWORD,
+            )
+        except Exception:
+            # Already exists — tolerate
+            pass
+
     def upsert(self, chunks: list[Chunk]) -> None:
         """Upsert chunks with their embeddings and ACL payload."""
         points = []
@@ -109,13 +122,18 @@ class QdrantVectorStore:
             self._client.upsert(collection_name=self._collection, points=points)
 
     def search(
-        self, embedding: Vector, top_k: int, acl: ACLContext
+        self,
+        embedding: Vector,
+        top_k: int,
+        acl: ACLContext,
+        *,
+        collection_id: str | None = None,
     ) -> list[ScoredChunk]:
-        """Search with ACL applied as a pre-similarity filter."""
+        """Search with ACL (and optional collection scoping) applied as a pre-similarity filter."""
         response = self._client.query_points(
             collection_name=self._collection,
             query=embedding,
-            query_filter=qdrant_filter(acl),
+            query_filter=qdrant_filter(acl, collection_id=collection_id),
             limit=top_k,
             with_payload=True,
         )

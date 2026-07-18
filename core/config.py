@@ -40,11 +40,10 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
 
     # --- Vector store: one switch ---
-    vector_store: Literal["qdrant", "pgvector"] = "qdrant"
+    vector_store: Literal["qdrant"] = "qdrant"
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "rag_chunks"
     pg_dsn: str = "postgresql://rag:rag@localhost:5432/rag"
-    pg_table: str = "rag_chunks"
 
     # --- Embeddings (OpenAI-compatible; dimension drives store schema) ---
     embed_base_url: str = NIM_BASE_URL

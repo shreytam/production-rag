@@ -52,8 +52,9 @@ app.include_router(documents_router)
 
 class QueryRequest(BaseModel):
     # Identity (tenant_id/acl_tags) intentionally REMOVED — it comes only from the
-    # verified token. The body carries only the question.
+    # verified token. The body carries only the question and an optional collection scope.
     question: str = Field(min_length=1)
+    collection_id: str | None = Field(default=None, max_length=128)
 
 
 class QueryResponse(BaseModel):
@@ -82,7 +83,7 @@ def query(
 
     # Guardrails (input + output) run inside pipeline.run; a blocked request
     # returns refused=True rather than raising.
-    result = pipeline.run(body.question, acl)
+    result = pipeline.run(body.question, acl, collection_id=body.collection_id)
 
     return QueryResponse(
         answer=result["answer"],
