@@ -27,7 +27,11 @@ def _aligned_values(base: list[RunItemScores], new: list[RunItemScores]) -> dict
             f"item-set mismatch: baseline has {sorted(base_by_id)}, new has {sorted(new_by_id)}"
         )
     ids = sorted(base_by_id)
-    metrics = set().union(*(set(s) for s in base_by_id.values())) if ids else set()
+    metrics = (
+        set().union(*(set(s) for s in base_by_id.values()), *(set(s) for s in new_by_id.values()))
+        if ids
+        else set()
+    )
     out: dict[str, tuple[list[float], list[float]]] = {}
     for metric in sorted(metrics):
         b_vals, n_vals = [], []
@@ -48,6 +52,12 @@ def evaluate_gate(*, backend: EvalBackend, dataset: str, new_run: str,
     base = backend.get_run_scores(dataset=dataset, run_name=baseline_run)
     new = backend.get_run_scores(dataset=dataset, run_name=new_run)
     aligned = _aligned_values(base, new)
+
+    if mode in ("threshold", "both") and not any(m in thresholds for m in aligned):
+        raise ValueError(
+            f"gate mode '{mode}' requires eval_gate_thresholds to define at least one floor "
+            f"for the run's metrics; got thresholds={sorted(thresholds)} for metrics={sorted(aligned)}"
+        )
 
     header = f"{'Metric':<22}{'Base':>10}{'New':>10}{'Delta':>10}{'CI hi':>10}{'Floor':>10}{'Verdict':>10}"
     sep = "-" * len(header)
