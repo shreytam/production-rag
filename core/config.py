@@ -149,6 +149,9 @@ class Settings(BaseSettings):
 
     # --- Eval Gate & Stats ---
     eval_tolerance: float = 0.03
+    eval_gate_mode: Literal["bootstrap", "threshold", "both"] = "bootstrap"
+    eval_baseline_run: str = "baseline"
+    eval_gate_thresholds: dict[str, float] = Field(default_factory=dict)
     eval_fast_n: int = 15
     eval_fast_seed: int = 0
     eval_bootstrap_resamples: int = 1000

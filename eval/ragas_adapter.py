@@ -127,7 +127,7 @@ def main() -> None:
     data_path = Path("data") / "eval" / f"{args.dataset}.json"
     items = json.loads(data_path.read_text())[: args.limit]
 
-    # Guardrails OFF for eval (same rationale as eval/run_eval.py).
+    # Guardrails OFF for eval (same rationale as eval/experiment.py).
     pipeline = pipeline_mod.build(
         version=args.version, corpus=args.dataset, enable_guardrails=False
     )

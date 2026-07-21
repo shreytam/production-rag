@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> None:
         pickle.dump(sparse, f)
     print(f"[ingest] BM25 index saved to {bm25_path}")
 
-    # --- Export golden eval set (shape consumed by eval.run_eval) ---
+    # --- Export golden eval set (shape consumed by eval.dataset_cli seed) ---
     import json
 
     golden = adapter.build_golden(limit=args.limit)
