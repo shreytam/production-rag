@@ -1,9 +1,8 @@
-.PHONY: install up up-app up-langfuse down ingest eval compare demo api test lint fmt clean
+.PHONY: install up up-app up-langfuse down ingest eval gate seed demo api test lint fmt clean
 
 DATASET ?= hotpotqa
-VERSION ?= baseline
-BASE    ?= baseline
-NEW     ?= full
+RUN     ?= local
+ITEMS   ?= data/eval/$(DATASET).json
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 install:            ## Create venv and install all extras
@@ -24,11 +23,14 @@ down:               ## Stop backends
 ingest:             ## Ingest a dataset:  make ingest DATASET=hotpotqa
 	uv run python -m ingest.run --dataset $(DATASET)
 
-eval:               ## Run eval:  make eval DATASET=hotpotqa VERSION=baseline
-	uv run python -m eval.run_eval --dataset $(DATASET) --version $(VERSION)
+eval:               ## Run eval experiment:  make eval DATASET=hotpotqa RUN=myrun
+	uv run python -m eval.experiment --dataset $(DATASET) --version full --run-name $(RUN)
 
-compare:            ## Compare two versions:  make compare BASE=baseline NEW=full
-	uv run python -m eval.compare --dataset $(DATASET) --base $(BASE) --new $(NEW)
+gate:               ## Gate a run vs baseline:  make gate DATASET=hotpotqa RUN=myrun
+	uv run python -m eval.gate --dataset $(DATASET) --new-run $(RUN) --baseline-run baseline
+
+seed:               ## Seed a dataset:  make seed DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json
+	uv run python -m eval.dataset_cli seed --dataset $(DATASET) --items $(ITEMS)
 
 demo:               ## Launch the Streamlit demo
 	uv run streamlit run app/demo.py
@@ -45,9 +47,5 @@ lint:               ## Lint
 fmt:                ## Format
 	uv run ruff format .
 
-.PHONY: baseline
-baseline:
-	uv run python -m eval.run_eval --dataset $(or $(DATASET),hotpotqa) --version baseline --fast --write-baseline
-
 clean:
-	rm -rf .pytest_cache .ruff_cache eval/runs
+	rm -rf .pytest_cache .ruff_cache

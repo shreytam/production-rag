@@ -49,8 +49,12 @@ guardrails/
   input_injection.py    ← InjectionGuardrail: heuristics + optional LLM second-opinion
 
 eval/
-  run_eval.py           ← Orchestrates: load golden → pipeline.run → metrics → JSON
-  compare.py            ← JSON diff with paired bootstrap; exits 1 on regression
+  experiment.py         ← Langfuse-native runner: dataset items → pipeline.run → evaluators → Langfuse dataset run (SDK run_experiment)
+  gate.py               ← reads run scores back from Langfuse; paired-bootstrap and/or thresholds; exits 1 on regression
+  evaluators.py         ← wraps the metric fns below as Langfuse evaluators
+  langfuse_eval.py      ← EvalBackend protocol + normalized types (the SDK seam)
+  _langfuse_backend.py  ← real Langfuse SDK backend (lazy-imported; only module importing langfuse in eval/)
+  dataset_cli.py        ← seed a dataset from a local file; add-from-trace to promote a prod trace
   generation_metrics.py ← faithfulness, answer_relevancy, context_precision, context_recall
   retrieval_metrics.py  ← recall_at_k, precision_at_k, ndcg_at_k, mrr
   llm_judge.py          ← Holistic LLM judge (single score 0–1)
@@ -210,38 +214,37 @@ Embedder.embed_documents([c.embed_text for c in chunks])  → list[Vector]
 
 ## Data-Flow: Eval Path
 
+Evaluation is a **Langfuse experiment**: the dataset and every run live on the
+hosted Langfuse; the loop is driven by the SDK's `run_experiment`. The existing
+metric functions are reused verbatim, re-wrapped as Langfuse evaluators.
+
 ```
-eval.run_eval --dataset hotpotqa --version full --fast
+eval.experiment --dataset hotpotqa --version full --fast --run-name <name>
     │
     ▼
-load data/eval/hotpotqa.json          → list[golden items]
-fast_subset(items, n=15)              → 15 stratified items
+backend.get_dataset_items("hotpotqa")   → Langfuse dataset items (input/expected_output/metadata)
+fast_subset(items, n=15)                → 15 stratified items
     │
-    for each item:
-        pipeline.run(question, acl)   → { answer, retrieved_ids, contexts, … }
-        retrieval_metrics(retrieved_ids, relevant_ids)
-            → recall_at_5, precision_at_5, ndcg_at_5, mrr
-        generation_metrics(question, answer, contexts, ground_truth, generator, embedder)
-            → faithfulness, answer_relevancy, context_precision, context_recall
-        holistic_judge(question, answer, contexts, generator)
-            → { score: float, reasoning: str }
+    run_experiment(name=hotpotqa, run_name=<name>, data=items, task, evaluators):
+        task:  pipeline.run(question, acl)   → { answer, retrieved_ids, contexts, … }   (linked trace per item)
+        evaluators (client-side, pushed as Langfuse scores):
+            retrieval  → recall_at_5, precision_at_5, ndcg_at_5, mrr
+            generation → faithfulness, answer_relevancy, context_precision, context_recall
+            judge      → judge_score
     │
-    aggregate_results(items)
-        → { metric: { mean, ci_lo, ci_hi } }  (bootstrap_ci, 1 000 resamples)
-    │
-    written to eval/runs/hotpotqa.full.results.json
+    a named Langfuse dataset run, per-item traces + scores (compare runs in the Langfuse UI)
 ```
 
 ```
-eval.compare --dataset hotpotqa --new full --baseline-file eval/baselines/hotpotqa.json
+eval.gate --dataset hotpotqa --new-run <name> --baseline-run baseline
     │
-    load base: eval/baselines/hotpotqa.json
-    load new:  eval/runs/hotpotqa.full.results.json
+    backend.get_run_scores(<name>)     → per-item scores (via get_dataset_run + api.scores.get_many)
+    backend.get_run_scores(baseline)
+    align by dataset-item id
     │
-    for each metric:
-        delta = new_mean − base_mean
-        paired_bootstrap(base_items, new_items)  → (_, ci_lo, ci_hi)
-        if new_mean < base_mean − tolerance:  FAIL
+    per metric, per eval_gate_mode (bootstrap | threshold | both):
+        bootstrap:  paired_bootstrap(base_items, new_items) → (_, lo, hi); FAIL if hi < −tolerance
+        threshold:  FAIL if new_mean < floor (eval_gate_thresholds)
     │
     print table; exit 0 (PASS) or exit 1 (FAIL)
 ```
@@ -282,23 +285,26 @@ contribution of each component layer.
 
 ---
 
-## Bootstrapping the Baseline (CI prerequisite)
+## Bootstrapping the Baseline Run (CI prerequisite)
 
-`eval/baselines/hotpotqa.json` is required by `compare.py`. It must be
-committed to the repository before the CI gate can pass on any PR.
+The gate compares each PR's run against a Langfuse dataset run named `baseline`
+for the `hotpotqa` dataset. That baseline run must exist on the hosted Langfuse
+before the CI gate can pass. The CI `eval` job requires the `LANGFUSE_HOST`,
+`LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` secrets (plus `NVIDIA_API_KEY`).
 
-To generate it:
+To bootstrap it:
 
 ```bash
-# With the stack running and NVIDIA_API_KEY set:
-uv run python -m ingest.run --dataset hotpotqa --limit 50
-make baseline DATASET=hotpotqa
-git add eval/baselines/hotpotqa.json
-git commit -m "eval: commit hotpotqa baseline (limit=50, fast)"
+# With the stack running, NVIDIA_API_KEY and LANGFUSE_* set:
+uv run python -m ingest.run --dataset hotpotqa --limit 50   # writes data/eval/hotpotqa.json
+make seed DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json    # upload golden items to Langfuse
+uv run python -m eval.experiment --dataset hotpotqa --version full --fast --run-name baseline
 ```
 
-The committed baseline **must** use the same `--limit 50` and `--fast` (15-item
-subset) that the CI workflow uses, or the comparison will be apples-to-oranges.
+The baseline run **must** use the same `--fast` (15-item subset) that the CI
+workflow uses, or the comparison will be apples-to-oranges. Dataset items are
+curated in the Langfuse UI (or promoted from traces via
+`python -m eval.dataset_cli add-from-trace`).
 
 ---
 

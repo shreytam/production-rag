@@ -22,7 +22,7 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 | **Tests** | ✅ 188 test functions across 11 files, passing |
 | **CI** | 📋 Gating plane designed, spec + plan written (SP5) — awaiting implementation |
 | **Production-readiness** | 🔴 **NOT production-grade** — see §8. 10 critical + 10 high findings from the audit |
-| **Eval baseline** | 📋 Baseline writer CLI and make target planned (SP5) — awaiting implementation |
+| **Eval baseline** | ✅ Langfuse-native eval (`eval.experiment` + `eval.gate` + `eval.dataset_cli`); a live `baseline` dataset run still needs producing |
 | **Multi-tier cache** | 📋 Designed + planned (spec + 12-task plan committed) — **not implemented** |
 | **Observability** | ✅ Langfuse v4 (OTel) wired; ⚠️ off by default, leaks raw queries when on |
 | **Git** | Clean working tree except untracked `docs/` audit + this file. Private repo `git@github.com:ShreytamGoyal/production-rag.git` |
@@ -102,7 +102,9 @@ guardrails/      runner + input_injection, pii_guard, output_groundedness,
 ingest/          chunking, contextual (LLM prefix), pii, base, run (CLI)
 corpora/         hotpotqa/, arxiv/, financebench/ — one adapter each
 eval/            retrieval_metrics, generation_metrics, llm_judge, stats (bootstrap CI),
-                 run_eval, compare, fast_subset, ragas_adapter, baselines/ (EMPTY)
+                 experiment (Langfuse runner), gate, evaluators, langfuse_eval +
+                 _langfuse_backend (SDK seam), dataset_cli (seed/add-from-trace),
+                 fast_subset, ragas_adapter
 observability/   langfuse_tracing (v4 OTel), cost, dashboard
 app/             api (FastAPI /query), demo (Streamlit)
 tests/           11 files, 188 test functions, _fakes.py for injection
@@ -126,9 +128,10 @@ make install                              # uv sync --all-extras
 cp infra/.env.example .env                # then set NVIDIA_API_KEY=nvapi-...
 make up                                    # Qdrant + Postgres + Langfuse stack
 make ingest DATASET=hotpotqa               # or: uv run python -m ingest.run --dataset hotpotqa --limit 200
-make eval DATASET=hotpotqa VERSION=baseline
-make eval DATASET=hotpotqa VERSION=full
-make compare DATASET=hotpotqa BASE=baseline NEW=full   # exits nonzero on regression
+make seed DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json   # upload golden items to Langfuse
+make eval DATASET=hotpotqa RUN=baseline                    # run experiment -> Langfuse dataset run
+make eval DATASET=hotpotqa RUN=candidate
+make gate DATASET=hotpotqa RUN=candidate                   # vs "baseline" run; exits nonzero on regression
 make demo                                  # Streamlit :8501
 make api                                   # FastAPI :8000
 make test                                  # pytest
@@ -170,12 +173,12 @@ Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_K
 | Grounded generation + inline citations | ✅ | structured output; citation validity gap (audit) |
 | Multi-tenant ACL isolation | ✅ store-side / 🔴 spoofable at API | filters correct; **no auth** derives the tenant |
 | Guardrails (injection, PII, groundedness, citation, schema) | ⚠️ wired but partly theatrical | output BLOCK leaks content; injection is regex-only |
-| Eval harness (retrieval + RAGAS-style + judge + bootstrap CI) | ✅ | native metrics, no framework lock-in |
-| CI eval gate | 📋 Spec + plan written (SP5) | no committed baseline yet; gate statistic statistical shift configured |
+| Eval harness (retrieval + RAGAS-style + judge + bootstrap CI) | ✅ | native metrics, now run as Langfuse experiments (client-side scores) |
+| CI eval gate | ✅ Langfuse-native | `eval.experiment` → `eval.gate` (paired-bootstrap and/or thresholds, scores read back from Langfuse); needs a `baseline` dataset run |
 | Observability (Langfuse v4, cost) | ⚠️ | works, but off by default and leaks raw queries when on; $0 cost on Anthropic path |
 | Multi-tier cache (L1–L4, Redis 8) | 📋 designed only | spec + plan in `docs/superpowers/`; not built |
 
-**Measured numbers (local, not committed):** HotpotQA baseline recall@5 ≈ 0.93, MRR ≈ 0.98, nDCG@5 ≈ 0.90 (N=50, bge-m3). The README metrics table is still TBD and `eval/baselines/` is empty.
+**Measured numbers (local, not committed):** HotpotQA baseline recall@5 ≈ 0.93, MRR ≈ 0.98, nDCG@5 ≈ 0.90 (N=50, bge-m3). The README metrics table is still TBD and no `baseline` Langfuse dataset run has been produced yet (eval plumbing is in place; running a live baseline is a separate step).
 
 ---
 
@@ -189,7 +192,7 @@ Full report: [`docs/PRODUCTION_READINESS_AUDIT.md`](./PRODUCTION_READINESS_AUDIT
 3. **PII never redacted at ingest** (`ingest/run.py:51`). `PIIRedactor` isn't called; corpus PII embedded + stored in cleartext across all stores.
 4. **Raw query logged to Langfuse pre-redaction** (`core/pipeline.py:91`). 100% sample rate; defeats the PII guardrails.
 5. **API silently runs dense-only** (`app/api.py:32`). Built with `dataset=None` → BM25 empty → "hybrid" isn't what runs.
-6. **CI eval gate can't catch regressions** (`eval/baselines/` empty). `compare.py` exits 1 → gate always fails → gets ignored.
+6. **CI eval gate can't catch regressions until a baseline run exists.** The Langfuse-native gate (`eval.gate`) needs a `baseline` dataset run on the hosted Langfuse; until one is produced, the gate has nothing to compare against.
 7. **No timeouts/retries on hot-path calls** (`retrieval/hybrid.py` + stores/reranker). One slow dependency 500s every query and hangs threads → outage.
 
 ### Recurring themes
@@ -207,12 +210,12 @@ Full report: [`docs/PRODUCTION_READINESS_AUDIT.md`](./PRODUCTION_READINESS_AUDIT
 **Priority order (my recommendation):**
 1. **P0 security batch** — auth (#1) + guardrail-leak (#2). Pure security, TDD-able, touches existing code.
 2. **P0 correctness batch** — wire BM25 into the API (#5), ingest PII redaction (#3), Langfuse redaction (#4).
-3. **Make the eval gate real** — run the full native eval baseline, commit `eval/baselines/hotpotqa.json`, gate on the paired bootstrap CI (#6). _(Historically blocked on a working NIM key.)_
+3. **Make the eval gate real** — seed the hotpotqa Langfuse dataset, run `eval.experiment --run-name baseline`, then the CI gate (`eval.gate`) has a baseline to compare against (#6). _(Historically blocked on a working NIM key.)_
 4. **Resilience** — timeouts + retries + partial-failure fallback on all external calls (#7).
 5. **Deployability** — Dockerfile, config validation at boot, real `/healthz`, rate limiting.
 6. **Then** implement the multi-tier cache per `docs/superpowers/plans/2026-06-27-rag-cache.md` (12 TDD tasks).
 
-**Parked:** full-suite eval baseline → README metrics table; stand up the 6-container Langfuse stack for a live trace; `full`-version run + `compare.py` lift table.
+**Parked:** full-suite eval baseline → README metrics table; stand up the 6-container Langfuse stack for a live trace; `full`-version run + `eval.gate` lift table.
 
 ---
 

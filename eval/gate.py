@@ -51,7 +51,9 @@ def evaluate_gate(*, backend: EvalBackend, dataset: str, new_run: str,
 
     header = f"{'Metric':<22}{'Base':>10}{'New':>10}{'Delta':>10}{'CI hi':>10}{'Floor':>10}{'Verdict':>10}"
     sep = "-" * len(header)
-    print(sep); print(header); print(sep)
+    print(sep)
+    print(header)
+    print(sep)
 
     failures: list[str] = []
     for metric, (b_vals, n_vals) in aligned.items():

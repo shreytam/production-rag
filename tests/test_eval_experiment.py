@@ -24,7 +24,8 @@ def _stub_models():
     class _Gen:
         model = "g"
         def complete(self, messages, response_model=None, **kw):
-            class _R: parsed = {"score": 0.5, "rationale": ""}
+            class _R:
+                parsed = {"score": 0.5, "rationale": ""}
             return _R()
     class _Emb:
         model = "e"
