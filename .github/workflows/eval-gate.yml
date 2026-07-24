@@ -1,13 +1,17 @@
 # CI pipeline for Production RAG
 #
-# Three jobs:
-#   lint           — offline: ruff + pytest (no secrets, no services required)
-#   acl-isolation  — online: pgvector/qdrant service containers for tenant security tests
-#   eval           — online: ingest → run experiment → gate against Langfuse baseline run
+# Five jobs:
+#   lint              — offline: ruff + pytest (no secrets, no services required)
+#   acl-isolation     — online: pgvector/qdrant service containers for tenant security tests
+#   preflight         — probes whether NVIDIA_API_KEY exists, so `eval` can gate on it
+#   eval              — online: ingest → run experiment → gate against Langfuse baseline run
+#   eval-gate-status  — aggregates the above into the single required status check
 #
 # REQUIRED SECRETS: `NVIDIA_API_KEY` plus `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`,
 # `LANGFUSE_SECRET_KEY` in repo Settings → Secrets → Actions.
-# The eval job will fail without them.  The lint job runs unconditionally.
+# Without `NVIDIA_API_KEY` the eval job is skipped (see the preflight job); the
+# LANGFUSE_* secrets are only consulted once it does run.  lint, acl-isolation
+# and preflight run unconditionally.
 #
 # PREREQUISITE for the eval gate: a Langfuse dataset run named "baseline" must
 # exist for the "hotpotqa" dataset (seeded via `eval.dataset_cli` and produced
@@ -108,12 +112,47 @@ jobs:
           uv run pytest tests/test_stores_acl.py tests/test_multitenant_isolation.py -v
 
   # ---------------------------------------------------------------------------
-  # Job 3: eval gate — requires NVIDIA_API_KEY and the Qdrant service
+  # Job 3: preflight — is the eval gate runnable on this event at all?
+  #
+  # The `secrets` context is NOT available in a job-level `if:` (only `github`,
+  # `inputs`, `needs` and `vars` are). Referencing it there does not merely
+  # evaluate falsey — it makes the whole workflow file invalid, so GitHub
+  # refuses to create ANY job, including lint. Probe the secret inside a job,
+  # where `secrets` IS available, and publish the answer as an output that the
+  # eval job can legally gate on.
+  #
+  # This also subsumes the previous `github.repository` guard: fork PRs never
+  # receive secrets, so the probe reports false there without hardcoding an
+  # owner/name that silently rots if the repo is renamed or transferred.
+  # ---------------------------------------------------------------------------
+  preflight:
+    name: Preflight (eval secret availability)
+    runs-on: ubuntu-latest
+    outputs:
+      run-eval: ${{ steps.probe.outputs.run-eval }}
+    steps:
+      - name: Probe for NVIDIA_API_KEY
+        id: probe
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          if [ -n "$NVIDIA_API_KEY" ]; then
+            echo "NVIDIA_API_KEY is present; the eval gate will run."
+            echo "run-eval=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "NVIDIA_API_KEY is absent (fork PR or unconfigured repo);" \
+                 "the eval gate will be skipped."
+            echo "run-eval=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 4: eval gate — requires NVIDIA_API_KEY and the Qdrant service
   # ---------------------------------------------------------------------------
   eval:
     name: Eval Gate (hotpotqa / full pipeline)
     runs-on: ubuntu-latest
-    if: github.repository == 'ShreytamGoyal/production-rag' && secrets.NVIDIA_API_KEY != ''
+    needs: preflight
+    if: needs.preflight.outputs.run-eval == 'true'
 
     # Qdrant service container — CI uses VECTOR_STORE=qdrant (the default)
     #
@@ -243,7 +282,7 @@ jobs:
             --baseline-run baseline
 
   # ---------------------------------------------------------------------------
-  # Job 4: Status Gate required check
+  # Job 5: Status Gate required check
   # ---------------------------------------------------------------------------
   eval-gate-status:
     name: Gated Status Check
