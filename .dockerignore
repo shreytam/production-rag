@@ -1,0 +1,49 @@
+# Keep the Docker build context small and secret-free.
+
+# VCS / editor / agent scratch
+.git
+.gitignore
+.claude
+.github
+.idea
+.vscode
+.DS_Store
+
+# Python envs / caches
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+*.egg-info
+
+# App runtime state / data (never bake into the image)
+.cache
+data
+contextual_cache
+*.duckdb
+qdrant_storage
+pgdata
+
+# Eval run artifacts
+eval/runs
+*.results.json
+
+# Local env / secrets
+.env
+.env.local
+infra/.env
+
+# Docs and tests (not needed at runtime; keep image small)
+docs
+tests
+README.md
+Project 1 — Production RAG.md
+
+# Misc
+node_modules
+.audit
+.remember
+.worktrees
+.agents
+payload.json
