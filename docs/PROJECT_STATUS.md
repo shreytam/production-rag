@@ -23,7 +23,7 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 | **CI** | 📋 Gating plane designed, spec + plan written (SP5) — awaiting implementation |
 | **Production-readiness** | 🔴 **NOT production-grade** — see §8. 10 critical + 10 high findings from the audit |
 | **Eval baseline** | ✅ Langfuse-native eval (`eval.experiment` + `eval.gate` + `eval.dataset_cli`); a live `baseline` dataset run still needs producing |
-| **Multi-tier cache** | 📋 Designed + planned (spec + 12-task plan committed) — **not implemented** |
+| **Semantic cache** | ✅ Decomposition E implemented (plumbing + fake + live smoke) — opt-in, off by default; live baseline / enabling in a real environment deferred |
 | **Observability** | ✅ Langfuse v4 (OTel) wired; ⚠️ off by default, leaks raw queries when on |
 | **Git** | Clean working tree except untracked `docs/` audit + this file. Private repo `git@github.com:ShreytamGoyal/production-rag.git` |
 
@@ -55,6 +55,7 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 | Observability | `langfuse` (v4, OpenTelemetry-based) |
 | Datasets | HuggingFace `datasets` |
 | Optional cross-check | `ragas` + `langchain-openai` (native metrics are the spine; ragas is an optional sanity check) |
+| Semantic cache backend | `redisvl` (Redis 8; optional `cache` extra, lazily imported) |
 
 ### Models (defaults — from `core/config.py`, the source of truth)
 | Role | Default (NIM) | Anthropic alt |
@@ -77,8 +78,10 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 | Observability | off | Langfuse self-host | `LANGFUSE_ENABLED=true` |
 
 ### Infrastructure (`infra/docker-compose.yml`)
-- **App backends:** Qdrant (`:6333`), Postgres/pgvector (`:5432`)
+- **App backends:** Qdrant (`:6333`), Postgres/pgvector (`:5432`), Redis 8 (`:6379` — arq queue + optional semantic cache)
 - **Langfuse v3 self-host stack (6 services):** web + worker + postgres + clickhouse + redis + minio
+  (the `redis` here is the **same single Redis 8 container** listed under app backends above — one
+  container, both roles: arq queue + semantic cache, and Langfuse's own queue/cache)
 - **CI:** GitHub Actions — `eval-gate.yml` (lint + pytest on every PR; eval job intended to gate on regression)
 
 > **Note:** There is **no Dockerfile for the app itself** yet — the only documented launch is a single-worker `uvicorn` dev server. This is a deployability gap (see audit P1).
@@ -107,8 +110,11 @@ eval/            retrieval_metrics, generation_metrics, llm_judge, stats (bootst
                  fast_subset, ragas_adapter
 observability/   langfuse_tracing (v4 OTel), cost, dashboard
 app/             api (FastAPI /query), demo (Streamlit)
-tests/           11 files, 188 test functions, _fakes.py for injection
-infra/           docker-compose.yml, .env.example
+cache/           semantic_cache (Protocol + serialization + build_cache),
+                 _redisvl_backend (only redisvl importer, lazy)
+tests/           11 files, 188 test functions, _fakes.py for injection;
+                 tests/cache/ (FakeSemanticCache + offline cache suite)
+infra/           docker-compose.yml (Redis 8), .env.example
 docs/            superpowers/{specs,plans}/ (cache design + plan),
                  PRODUCTION_READINESS_AUDIT.md, PROJECT_STATUS.md (this file)
 .github/         workflows/eval-gate.yml
@@ -155,6 +161,9 @@ Pass `--contextual` to `ingest.run` to enable per-chunk LLM prefixes (~1 LLM cal
 | `guardrails_enabled` | `True` | forced **off** on the eval path (would confound metrics) |
 | `langfuse_enabled` | `False` | |
 | `max_chunks_per_corpus` | `2000` | keeps corpora inside NIM rate limits |
+| `cache_enabled` | `False` | opt-in semantic cache; needs Redis 8 + `uv sync --extra cache` |
+| `cache_similarity_threshold` | `0.9` | min cosine similarity for a cache hit |
+| `cache_ttl_seconds` | `3600` | per-entry TTL (new-document staleness backstop) |
 
 Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_KEY` (or `OPENAI_API_KEY` when the base URL points at openai.com). Config is loaded from `infra/.env` then `.env` (root wins).
 
@@ -176,7 +185,9 @@ Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_K
 | Eval harness (retrieval + RAGAS-style + judge + bootstrap CI) | ✅ | native metrics, now run as Langfuse experiments (client-side scores) |
 | CI eval gate | ✅ Langfuse-native | `eval.experiment` → `eval.gate` (paired-bootstrap and/or thresholds, scores read back from Langfuse); needs a `baseline` dataset run |
 | Observability (Langfuse v4, cost) | ⚠️ | works, but off by default and leaks raw queries when on; $0 cost on Anthropic path |
-| Multi-tier cache (L1–L4, Redis 8) | 📋 designed only | spec + plan in `docs/superpowers/`; not built |
+| Semantic cache (answer + retrieval tiers, Redis 8/redis-vl) | ✅ Decomposition E | plumbing + `FakeSemanticCache` + `RedisVLSemanticCache` + live smoke; tenant/collection-isolated, targeted eviction + TTL backstop, eval bypass; **off by default** — enabling against a live Redis 8 + producing a cache-hit baseline is deferred |
+
+> **Before enabling the semantic cache:** run `CACHE_LIVE_SMOKE=1 .venv/bin/python -m pytest tests/test_cache_live_smoke.py` against a real Redis 8 to verify the redis-vl call surface (`index.load(..., ttl=)`, `index.drop_keys(...)`, `index.create(overwrite=False)`, `VectorQuery`/`FilterQuery`/`Tag` field names, cosine `vector_distance` in `[0, 2]`). The cache stays default-off (`CACHE_ENABLED=false`) until that smoke test has passed.
 
 **Measured numbers (local, not committed):** HotpotQA baseline recall@5 ≈ 0.93, MRR ≈ 0.98, nDCG@5 ≈ 0.90 (N=50, bge-m3). The README metrics table is still TBD and no `baseline` Langfuse dataset run has been produced yet (eval plumbing is in place; running a live baseline is a separate step).
 
@@ -213,7 +224,7 @@ Full report: [`docs/PRODUCTION_READINESS_AUDIT.md`](./PRODUCTION_READINESS_AUDIT
 3. **Make the eval gate real** — seed the hotpotqa Langfuse dataset, run `eval.experiment --run-name baseline`, then the CI gate (`eval.gate`) has a baseline to compare against (#6). _(Historically blocked on a working NIM key.)_
 4. **Resilience** — timeouts + retries + partial-failure fallback on all external calls (#7).
 5. **Deployability** — Dockerfile, config validation at boot, real `/healthz`, rate limiting.
-6. **Then** implement the multi-tier cache per `docs/superpowers/plans/2026-06-27-rag-cache.md` (12 TDD tasks).
+6. **Done:** the semantic cache (Decomposition E, `docs/superpowers/plans/2026-07-24-decomposition-e-semantic-cache.md`) — plumbing, `FakeSemanticCache`, `RedisVLSemanticCache`, infra/deps/docs. Remaining: run `uv sync --extra cache` against a real Redis 8, flip `CACHE_ENABLED=true`, and measure a live hit-rate/latency baseline.
 
 **Parked:** full-suite eval baseline → README metrics table; stand up the 6-container Langfuse stack for a live trace; `full`-version run + `eval.gate` lift table.
 
@@ -224,8 +235,11 @@ Full report: [`docs/PRODUCTION_READINESS_AUDIT.md`](./PRODUCTION_READINESS_AUDIT
 | What | Where |
 |---|---|
 | Full production audit | `docs/PRODUCTION_READINESS_AUDIT.md` |
-| Cache design spec | `docs/superpowers/specs/2026-06-27-rag-cache-design.md` |
-| Cache implementation plan (12 tasks) | `docs/superpowers/plans/2026-06-27-rag-cache.md` |
+| Cache design spec (superseded) | `docs/superpowers/specs/2026-06-27-rag-cache-design.md` |
+| Cache implementation plan (superseded, 12 tasks) | `docs/superpowers/plans/2026-06-27-rag-cache.md` |
+| Semantic cache design (Decomposition E, implemented) | `docs/superpowers/specs/2026-07-24-decomposition-e-semantic-cache-design.md` |
+| Semantic cache implementation plan (Decomposition E, 7 tasks) | `docs/superpowers/plans/2026-07-24-decomposition-e-semantic-cache.md` |
+| Semantic cache architecture | `docs/architecture.md` — "Semantic Cache" section |
 | Original build plan | (plan-mode file, referenced in session history) |
 | Commit rules | `CLAUDE.md` — commits authored solely as Shreytam Goyal; no Claude attribution |
 | Config source of truth | `core/config.py` |

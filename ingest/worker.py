@@ -17,6 +17,7 @@ class IngestDeps:
     parsers: object    # ParserRegistry
     ingestor: object   # IncrementalIngestor
     settings: Settings
+    caches: object = None   # tuple[SemanticCache, SemanticCache] | None
 
 
 def _pii_process(docs, settings, tenant_id):
@@ -29,6 +30,34 @@ def _pii_process(docs, settings, tenant_id):
     audit = PIIAuditLog(settings)
     clean_docs, _ = _apply_pii_ingest_policy(docs, settings, detector, audit)
     return clean_docs, detector, audit
+
+
+def _invalidate_caches(deps: IngestDeps, tenant_id: str, collection_id, doc_id: str) -> None:
+    """Evict every cached answer/retrieval that cites this document, both tiers.
+
+    Evicts BOTH the document's own collection partition AND the unscoped
+    (`collection_id=None`, i.e. "__none__") partition. `retrieval/acl.py`
+    treats `collection_id=None` as "no collection filter" — an unscoped query
+    retrieves and can cite documents from ANY collection in the tenant, and
+    such answers are cached under the unscoped partition. Without also
+    evicting that partition here, a stale cached answer could keep citing a
+    document that just changed or was deleted in its own collection. When the
+    document has no collection of its own (already unscoped), the two scopes
+    collapse to one — evict once, not twice.
+
+    No-op when the cache is disabled. Never raises into the worker body."""
+    if not deps.caches:
+        return
+    own = collection_id or None
+    scopes = (own,) if own is None else (own, None)
+    for cache in deps.caches:
+        for scope in scopes:
+            try:
+                cache.invalidate_document(
+                    tenant_id=tenant_id, collection_id=scope, doc_id=doc_id)
+            except Exception:  # cache eviction must never fail the ingest/delete
+                logger.exception(
+                    "cache invalidation failed for %s (collection=%r)", doc_id, scope)
 
 
 def run_ingest(deps: IngestDeps, document_id: str) -> None:
@@ -63,6 +92,7 @@ def run_ingest(deps: IngestDeps, document_id: str) -> None:
 
         n = deps.ingestor.ingest_document(tenant_id, document_id, chunks, acl)
         deps.registry.set_status(document_id, tenant_id, DocumentStatus.READY, chunk_count=n)
+        _invalidate_caches(deps, tenant_id, rec.collection_id, document_id)
     except Exception as e:  # fail-closed
         logger.exception("ingest failed for %s", document_id)
         deps.registry.set_status(document_id, tenant_id, DocumentStatus.FAILED,
@@ -83,6 +113,7 @@ def run_delete(deps: IngestDeps, document_id: str) -> None:
         deps.ingestor.delete_document(tenant_id, document_id, acl)
         deps.blobs.delete(rec.blob_key)
         deps.registry.delete(document_id, tenant_id)
+        _invalidate_caches(deps, tenant_id, rec.collection_id, document_id)
     except Exception as e:  # fail-closed
         logger.exception("delete failed for %s", document_id)
         deps.registry.set_status(document_id, tenant_id, DocumentStatus.FAILED,
@@ -92,12 +123,17 @@ def run_delete(deps: IngestDeps, document_id: str) -> None:
 def _build_deps(settings: Settings) -> IngestDeps:
     from core.registry import (build_blob_store, build_document_registry,
                                build_incremental_ingestor, build_parser_registry)
+    caches = None
+    if settings.cache_enabled:
+        from cache.semantic_cache import build_cache
+        caches = build_cache(settings)
     return IngestDeps(
         registry=build_document_registry(settings),
         blobs=build_blob_store(settings),
         parsers=build_parser_registry(settings),
         ingestor=build_incremental_ingestor(settings),
         settings=settings,
+        caches=caches,
     )
 
 

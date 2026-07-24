@@ -179,6 +179,50 @@ RAGPipeline.run(question, acl)
 
 ---
 
+## Semantic Cache (`cache/`)
+
+Opt-in (`cache_enabled = False` by default; requires Redis 8). When enabled,
+`RAGPipeline.build()` wires **two** cache tiers, each the same `SemanticCache`
+Protocol implementation bound to its own redis-vl index:
+
+- **Answer tier** (`rag_cache_answer`) — `query → final Answer`. A hit skips
+  retrieval **and** generation (and output guardrails — the stored answer was
+  already vetted when it was cached).
+- **Retrieval tier** (`rag_cache_retrieval`) — `query → reranked chunk set`. A
+  hit skips retrieval only; generation always runs fresh.
+
+Both tiers key on **semantic** similarity — a cosine-distance vector search on
+the embedded (redacted) query, not exact string match — so paraphrased repeat
+questions still hit. `core/config.py` knobs: `cache_enabled`,
+`cache_similarity_threshold` (default `0.9`), `cache_ttl_seconds` (default
+`3600`).
+
+**Backend:** `cache/_redisvl_backend.py` (`RedisVLSemanticCache`) is the only
+module that imports `redisvl`, and only lazily inside method bodies — the
+offline test suite and lint never need Redis or the package installed. It
+targets **Redis 8**, which folds the vector/search engine into core (no
+separate Redis Stack image). `tests/cache/fake_cache.py` (`FakeSemanticCache`)
+is an in-memory equivalent used by the entire offline suite.
+
+**Isolation:** every entry is tagged `tenant_id` + `collection_id` (mandatory
+TAG filters on both store and lookup) — a cache hit can never cross tenants or
+collections, mirroring the ACL security model above.
+
+**Invalidation:** `ingest/worker.py`'s `run_ingest`/`run_delete`, after
+committing to Qdrant, call `invalidate_document(tenant_id, collection_id,
+doc_id)` on both tiers — a filtered delete over the `doc_ids` TAG reverse
+index, so every cached entry citing a changed/deleted document is evicted
+precisely (no dangling citations). A brand-new document has no id to match
+against, so a per-entry **TTL** (`cache_ttl_seconds`) backstops that
+new-document blind spot until the entry self-expires.
+
+**Eval bypass:** `eval/experiment.py` builds the pipeline via `pipeline.build`
+with the cache off, exactly like guardrails are forced off — cache hits can
+never confound Langfuse metrics. Refusals and guardrail-blocked answers are
+never written to the cache.
+
+---
+
 ## Data-Flow: Ingest Path
 
 ```
