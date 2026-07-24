@@ -8,7 +8,8 @@ class _RecordingCache:
     def lookup(self, **kw): return None
     def store(self, **kw): pass
     def invalidate_document(self, *, tenant_id, collection_id, doc_id):
-        self.calls.append((tenant_id, collection_id, doc_id)); return 1
+        self.calls.append((tenant_id, collection_id, doc_id))
+        return 1
 
 
 @dataclass

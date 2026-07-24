@@ -11,7 +11,6 @@ backstops the new-document blind spot.
 from __future__ import annotations
 
 import json
-from typing import Sequence
 
 from cache.semantic_cache import norm_collection
 
