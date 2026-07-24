@@ -52,7 +52,7 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 | Numerics / stats | `numpy`, `scipy` (eval), `pandas` (eval) |
 | HTTP / retry | `httpx`, `tenacity` |
 | Local reranker | `sentence-transformers` (BGE cross-encoder) |
-| API / demo | `fastapi`, `uvicorn`, `streamlit` |
+| API / console | `fastapi`, `uvicorn` (console is static HTML served by the API) |
 | Observability | `langfuse` (v4, OpenTelemetry-based) |
 | Datasets | HuggingFace `datasets` |
 | Optional cross-check | `ragas` + `langchain-openai` (native metrics are the spine; ragas is an optional sanity check) |
@@ -110,7 +110,7 @@ eval/            retrieval_metrics, generation_metrics, llm_judge, stats (bootst
                  _langfuse_backend (SDK seam), dataset_cli (seed/add-from-trace),
                  fast_subset, ragas_adapter
 observability/   langfuse_tracing (v4 OTel), cost, dashboard
-app/             api (FastAPI /query), demo (Streamlit)
+app/             api (FastAPI /query), documents (async ingest), ui (/ui test console)
 cache/           semantic_cache (Protocol + serialization + build_cache),
                  _redisvl_backend (only redisvl importer, lazy)
 tests/           11 files, 188 test functions, _fakes.py for injection;
@@ -139,7 +139,7 @@ make seed DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json   # upload golden items
 make eval DATASET=hotpotqa RUN=baseline                    # run experiment -> Langfuse dataset run
 make eval DATASET=hotpotqa RUN=candidate
 make gate DATASET=hotpotqa RUN=candidate                   # vs "baseline" run; exits nonzero on regression
-make demo                                  # Streamlit :8501
+make console                               # FastAPI :8000 + test console at /ui
 make api                                   # FastAPI :8000
 make test                                  # pytest
 ```

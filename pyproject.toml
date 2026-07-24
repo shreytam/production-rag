@@ -23,7 +23,10 @@ dependencies = [
 eval = ["datasets>=2.20", "scipy>=1.13", "pandas>=2.2"]
 pii-ner = ["presidio-analyzer>=2.2", "spacy>=3.7"]
 rerank-local = ["sentence-transformers>=3.0"]
-app = ["fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37", "pyjwt[crypto]>=2.9", "unstructured>=0.15", "arq>=0.26"]
+# python-multipart is required by FastAPI for File()/Form() — i.e. the /documents
+# upload endpoint. It was previously satisfied only as a transitive dep of
+# streamlit; declare it directly so the upload path cannot break silently.
+app = ["fastapi>=0.112", "uvicorn>=0.30", "pyjwt[crypto]>=2.9", "unstructured>=0.15", "arq>=0.26", "python-multipart>=0.0.9"]
 obs = ["langfuse>=4"]
 # Optional: real redis-vl backend for the semantic cache (Redis 8). Lazily
 # imported (cache/_redisvl_backend.py only) so the offline suite and lint stay
@@ -37,7 +40,7 @@ dev = ["pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6"]
 all = [
     "datasets>=2.20", "scipy>=1.13", "pandas>=2.2",
     "sentence-transformers>=3.0",
-    "fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37", "pyjwt[crypto]>=2.9",
+    "fastapi>=0.112", "uvicorn>=0.30", "pyjwt[crypto]>=2.9", "python-multipart>=0.0.9",
     "langfuse>=4",
     "redisvl>=0.3",
     "pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6",

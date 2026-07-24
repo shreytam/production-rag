@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from fastapi import Depends, Header, HTTPException
 
-from core.config import get_settings
 from core.interfaces import AuthError
 from core.registry import build_allowlist, build_auth_verifier
 from core.types import Principal
@@ -52,17 +51,3 @@ def require_principal(
     if tags != principal.acl_tags:
         principal = principal.model_copy(update={"acl_tags": tags})
     return principal
-
-
-def demo_principal(tenant_id: str, *, acl_tags=()) -> Principal:
-    """Mint + verify a token for the Streamlit demo, exercising the real auth path
-    so the demo proves isolation rather than trusting a dropdown. Requires the dev
-    signer (HS256 secret + flag); raises otherwise."""
-    from providers.auth.dev_signer import mint_token
-
-    s = get_settings()
-    if not s.auth_dev_signer_enabled or not s.jwt_secret:
-        raise RuntimeError("demo token minting requires auth_dev_signer_enabled and jwt_secret")
-    token = mint_token(tenant_id=tenant_id, acl_tags=list(acl_tags), secret=s.jwt_secret,
-                       issuer=s.jwt_issuer, audience=s.jwt_audience)
-    return build_auth_verifier(s).verify(token)

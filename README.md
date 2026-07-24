@@ -178,9 +178,8 @@ eval: golden dataset → experiment → Langfuse scores → gate (baseline vs ne
 │   ├── documents.py      # /documents router (async upload / list / get / delete)
 │   ├── auth.py           # require_principal — JWT → tenant identity
 │   ├── ui.py             # /ui test console + dev-token endpoint (make console)
-│   ├── static/
-│   │   └── console.html  # single-page console: upload → ingest → query
-│   └── demo.py           # Streamlit demo (make demo) — superseded by /ui
+│   └── static/
+│       └── console.html  # single-page console: upload → ingest → query
 │
 ├── tests/                # Offline test suite (fakes, no secrets, no services)
 ├── infra/
@@ -455,7 +454,6 @@ Other operational dimensions scale similarly:
 | `make eval DATASET=X RUN=R` | Run an eval experiment → Langfuse dataset run |
 | `make gate DATASET=X RUN=R` | Gate run R against the `baseline` run; exits nonzero on regression |
 | `make console` | Launch the API + test console on http://127.0.0.1:8000/ui |
-| `make demo` | Launch the Streamlit demo on port 8501 (superseded by `make console`) |
 | `make api` | Launch the FastAPI service on port 8000 (uvicorn --reload) |
 | `make test` | Run the test suite (`pytest`) |
 | `make lint` | Lint with ruff |

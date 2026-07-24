@@ -32,9 +32,6 @@ gate:               ## Gate a run vs baseline:  make gate DATASET=hotpotqa RUN=m
 seed:               ## Seed a dataset:  make seed DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json
 	uv run python -m eval.dataset_cli seed --dataset $(DATASET) --items $(ITEMS)
 
-demo:               ## Launch the Streamlit demo
-	uv run streamlit run app/demo.py
-
 api:                ## Launch the FastAPI service
 	uv run uvicorn app.api:app --reload
 
