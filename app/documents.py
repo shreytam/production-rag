@@ -97,7 +97,9 @@ def _build_arq_enqueuer() -> Callable[..., Awaitable[None]]:
 
             from ingest.worker import WorkerSettings
 
-            _pool = await create_pool(WorkerSettings.redis_settings())
+            # Attribute, not a factory — arq reads it straight out of the class
+            # __dict__ and never calls it (see ingest.worker.WorkerSettings).
+            _pool = await create_pool(WorkerSettings.redis_settings)
         await _pool.enqueue_job(_ACTION_TO_FN[action], document_id)
 
     return enqueue
