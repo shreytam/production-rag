@@ -165,6 +165,9 @@ Pass `--contextual` to `ingest.run` to enable per-chunk LLM prefixes (~1 LLM cal
 | `cache_enabled` | `False` | opt-in semantic cache; needs Redis 8 + `uv sync --extra cache` |
 | `cache_similarity_threshold` | `0.9` | min cosine similarity for a cache hit |
 | `cache_ttl_seconds` | `3600` | per-entry TTL (new-document staleness backstop) |
+| `rewriter_enabled` | `True` | SP12 query rewriter (synonym tier); retrieval-only, generation keeps the original question |
+| `rewriter_llm_enabled` | `True` | LLM expansion fallback for ≥ threshold-word queries with no synonym hit |
+| `rewriter_llm_threshold` | `5` | word count above which the LLM tier may fire |
 
 Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_KEY` (or `OPENAI_API_KEY` when the base URL points at openai.com). Config is loaded from `infra/.env` then `.env` (root wins).
 
@@ -187,6 +190,7 @@ Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_K
 | CI eval gate | ✅ Langfuse-native | `eval.experiment` → `eval.gate` (paired-bootstrap and/or thresholds, scores read back from Langfuse); needs a `baseline` dataset run |
 | Observability (Langfuse v4, cost) | ⚠️ | works, but off by default and leaks raw queries when on; $0 cost on Anthropic path |
 | Semantic cache (answer + retrieval tiers, Redis 8/redis-vl) | ✅ Decomposition E | plumbing + `FakeSemanticCache` + `RedisVLSemanticCache` + live smoke; tenant/collection-isolated, targeted eviction + TTL backstop, eval bypass; **off by default** — enabling against a live Redis 8 + producing a cache-hit baseline is deferred |
+| Query rewriting (per-tenant synonym + LLM expansion) | ✅ SP12 | `HybridQueryRewriter`; runs after input-guard redaction, before the cache-key embed; retrieval-only (generation keeps the original question); hostile per-tenant synonym isolation; fail-soft; on by default; enabled in eval (G4). Synonym dictionaries are read from Redis (`rewriter:synonyms:{tenant_id}`) — no admin load path yet |
 
 > **redis-vl call surface verified (2026-07-24):** the live smoke test `CACHE_LIVE_SMOKE=1 REDIS_URL=redis://localhost:6399 .venv/bin/python -m pytest tests/test_cache_live_smoke.py` passed against a real Redis 8.8.0 (`redis:latest`, query engine in core) with redis-vl 0.23.0 — `index.load(..., ttl=)`, `index.drop_keys(...)`, `index.create(overwrite=False)`, `VectorQuery`/`FilterQuery`/`Tag` field names, and cosine `vector_distance` in `[0, 2]` all confirmed. The gate caught one real bug: the payload text field could not be named `payload` (reserved keyword arg on redis-py's search `Document`, collides at result parse) — renamed to `cache_payload`. The cache remains default-off (`CACHE_ENABLED=false`); flipping it on + producing a live cache-hit baseline is still deferred. Note: homebrew's `redis@8` is built without the query engine (only the `vectorset` module), so use the official `redis:8`/`redis:latest` image, not a homebrew server.
 
@@ -247,6 +251,9 @@ The P0 security/correctness batches from the original audit are **done** (see §
 | Semantic cache design (Decomposition E, implemented) | `docs/superpowers/specs/2026-07-24-decomposition-e-semantic-cache-design.md` |
 | Semantic cache implementation plan (Decomposition E, 7 tasks) | `docs/superpowers/plans/2026-07-24-decomposition-e-semantic-cache.md` |
 | Semantic cache architecture | `docs/architecture.md` — "Semantic Cache" section |
+| Query rewriting design (SP12, implemented) | `docs/superpowers/specs/2026-07-12-sp12-query-rewriting-design.md` |
+| Query rewriting plan (SP12, 5 tasks; rewritten 2026-07-24 for current arch) | `docs/superpowers/plans/2026-07-12-sp12-query-rewriting.md` |
+| Query rewriting architecture | `docs/architecture.md` — "Query Rewriting" section |
 | Original build plan | (plan-mode file, referenced in session history) |
 | Commit rules | `CLAUDE.md` — commits authored solely as Shreytam Goyal; no Claude attribution |
 | Config source of truth | `core/config.py` |

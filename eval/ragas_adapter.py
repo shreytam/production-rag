@@ -130,9 +130,11 @@ def main() -> None:
     # Guardrails OFF and cache OFF for eval (same rationale as eval/experiment.py):
     # a cache hit would skip retrieval/generation entirely and silently confound
     # the RAGAS metrics.
+    # Rewriter ON (SP12 G4): eval must measure query-rewriting's recall impact.
     pipeline = pipeline_mod.build(
         version=args.version, corpus=args.dataset,
         enable_guardrails=False, enable_cache=False,
+        enable_rewriter=True,
     )
     scorer = RagasScorer()
 

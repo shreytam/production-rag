@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Literal
 
 from core.config import Settings, get_settings
-from core.interfaces import Embedder, Generator, ManifestStore, Reranker, SparseRetriever, VectorStore, PIIDetector, BlobStore
+from core.interfaces import Embedder, Generator, ManifestStore, QueryRewriter, Reranker, SparseRetriever, VectorStore, PIIDetector, BlobStore
 
 GeneratorRole = Literal["gen", "context", "judge"]
 
@@ -111,6 +111,24 @@ def build_generator(role: GeneratorRole = "gen", settings: Settings | None = Non
         }[role]
         return AnthropicGenerator(model, s.anthropic_api_key)
     raise ValueError(f"Unknown provider for role {role}: {provider}")
+
+
+def build_query_rewriter(
+    settings: Settings | None = None, *, generator: Generator | None = None
+) -> QueryRewriter:
+    """Build the SP12 query rewriter (deterministic synonym tier + LLM fallback).
+    Uses the cheap ``context`` generator role and the shared ``redis_url``. A
+    pre-built ``generator`` may be injected (the pipeline passes one so a single
+    build seam stays monkeypatchable in tests)."""
+    s = settings or get_settings()
+    from providers.rewriter.hybrid_rewriter import HybridQueryRewriter
+
+    return HybridQueryRewriter(
+        generator if generator is not None else build_generator("context", s),
+        s.redis_url,
+        llm_enabled=s.rewriter_llm_enabled,
+        llm_threshold=s.rewriter_llm_threshold,
+    )
 
 
 def build_auth_verifier(settings: Settings | None = None):
