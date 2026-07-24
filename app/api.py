@@ -49,6 +49,12 @@ from app.documents import router as documents_router  # noqa: E402
 
 app.include_router(documents_router)
 
+# Local test console. Its routes gate themselves on auth_dev_signer_enabled and
+# 404 when it is off, so mounting unconditionally adds no production surface.
+from app.ui import router as ui_router  # noqa: E402
+
+app.include_router(ui_router)
+
 
 class QueryRequest(BaseModel):
     # Identity (tenant_id/acl_tags) intentionally REMOVED — it comes only from the

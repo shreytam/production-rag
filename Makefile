@@ -38,6 +38,11 @@ demo:               ## Launch the Streamlit demo
 api:                ## Launch the FastAPI service
 	uv run uvicorn app.api:app --reload
 
+console:            ## Launch the API with the test console at http://127.0.0.1:8000/ui
+	AUTH_DEV_SIGNER_ENABLED=true \
+	JWT_SECRET=$${JWT_SECRET:-dev-console-secret-not-for-production!} \
+	uv run uvicorn app.api:app --reload
+
 test:               ## Run the test suite
 	uv run pytest
 
