@@ -187,6 +187,13 @@ class Settings(BaseSettings):
     cache_similarity_threshold: float = 0.9
     cache_ttl_seconds: int = 3600
 
+    # --- Query rewriting & synonym expansion (SP12) ---
+    # Runs after input-guard redaction, before the cache-key embed. The synonym
+    # tier reads rewriter:synonyms:{tenant_id} from the shared Redis (redis_url).
+    rewriter_enabled: bool = True
+    rewriter_llm_enabled: bool = True
+    rewriter_llm_threshold: int = 5
+
     @model_validator(mode="after")
     def _apply_llm_router(self) -> "Settings":
         """Point every model role at one OpenAI-compatible router unless the role
