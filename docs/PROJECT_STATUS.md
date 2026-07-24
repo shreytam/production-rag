@@ -85,7 +85,7 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
   container, both roles: arq queue + semantic cache, and Langfuse's own queue/cache)
 - **CI:** GitHub Actions — `eval-gate.yml` (lint + pytest on every PR; eval job intended to gate on regression)
 
-> **Note:** There is **no Dockerfile for the app itself** yet — the only documented launch is a single-worker `uvicorn` dev server. This is a deployability gap (see audit P1).
+> **Note:** A baked application `Dockerfile` (+ `.dockerignore`) now exists at the repo root, and `infra/docker-compose.yml` has an `api` service that builds it (SP9, Docker-only scope). It runs the FastAPI app via `uvicorn app.api:app`; the same image also runs the `ingest-worker` via a command override. `api` and `ingest-worker` share ingest state through the `app_shared_cache` named volume. Rate limiting / request caps and other hardening are still deferred (see §9 item 4).
 
 ---
 
@@ -220,9 +220,9 @@ Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_K
 - **Guardrails** — output-block leak is fixed (see #2); an **indirect-injection scan** now runs over retrieved chunk text and flags `indirect_injection_suspected` (`core/pipeline.py:184-189`, detection + log, non-blocking). Input injection is still primarily regex-based with optional LLM escalation — hardened, not exhaustive.
 - **"Green but wrong"** — dense-only fallback fixed (#5); **NaN-passes-gate fixed** (`eval/gate.py:74-82` treats `nan` CI-bound / thresholds as non-passing); **incomplete cost table fixed (SP7)** — `PRICING` now covers every default model and unknown models warn once instead of silently pricing at $0. Not re-checked this pass: whether tracing over-swallows errors. Still open: `core/pipeline.py:249` prices by `gen_model` regardless of `gen_provider`, so the Anthropic path can look up the wrong PRICING entry (see §7 Observability row).
 - **Security-critical paths in CI** — the `acl-isolation` CI job now runs the **real** ACL/isolation suites (`tests/test_stores_acl.py`, `tests/test_multitenant_isolation.py`) against live Qdrant + Postgres service containers (Qdrant readiness gated host-side after the healthcheck fix). Real filters are exercised in CI, not just a fake.
-- **Not packaged for deploy** — config **is** validated at boot (4 `@model_validator(mode="after")` in `core/config.py`) and a `/healthz` exists (`app/api.py:68`). **Still open:** no `Dockerfile`, and no true rate limiting (only an 8000-char question cap, `max_question_chars`).
+- **Not packaged for deploy** — config **is** validated at boot (4 `@model_validator(mode="after")` in `core/config.py`) and a `/healthz` exists (`app/api.py:68`). A baked `Dockerfile` + `api` compose service now exist (SP9). **Still open:** no true rate limiting (only an 8000-char question cap, `max_question_chars`).
 
-> ✏️ **Note on the `infra/.env` NVIDIA key:** the auto-audit flagged it "rotate today." It is **gitignored and never tracked in git** — local hygiene (add a `.dockerignore` before containerizing), not an emergency.
+> ✏️ **Note on the `infra/.env` NVIDIA key:** the auto-audit flagged it "rotate today." It is **gitignored and never tracked in git**, and also excluded from the Docker build context via `.dockerignore` — local hygiene, not an emergency.
 
 ---
 
@@ -234,7 +234,7 @@ The P0 security/correctness batches from the original audit are **done** (see §
 1. **Make the eval gate real — Decomposition D (#6).** Seed the hotpotqa Langfuse dataset, add `LANGFUSE_*` + `NVIDIA_API_KEY` repo secrets, run `eval.experiment --run-name baseline` on hosted Langfuse; then CI's `eval.gate` has a baseline to compare against. **This is the highest-value remaining task** — it's what makes the whole CI gate functional.
 2. **Semantic cache go-live.** `uv sync --extra cache`, flip `CACHE_ENABLED=true` in a real env, and measure a hit-rate/latency baseline. The redis-vl call surface is already verified (live smoke passed, PR #12); rides naturally on D's baseline infra.
 3. **Close the #7 residual.** Give the Qdrant client an explicit timeout + a retry wrapper, and reconsider the 600s default timeout for the query hot path.
-4. **Deployability.** Add a `Dockerfile` (+ `.dockerignore`) and real rate limiting / request caps. (Config boot-validation and `/healthz` already exist.)
+4. **Deployability (partially done — SP9).** A baked `Dockerfile` (+ `.dockerignore`) and `api` compose service now exist (§3). Still deferred: real rate limiting / request caps, k8s/autoscaling, CI/CD image publishing, reverse proxy/TLS, secrets managers. (Config boot-validation and `/healthz` already exist.)
 5. **Deferred perf nit (E).** A cache miss re-embeds the query the retriever also embeds — thread the query vector into the retriever interface to avoid the double embed.
 
 **Parked:** full-suite eval baseline → README metrics table; stand up the 6-container Langfuse stack for a live trace; `full`-version run + `eval.gate` lift table.

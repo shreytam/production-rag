@@ -9,6 +9,8 @@
 #   docker compose -f infra/docker-compose.yml up -d qdrant postgres # query path only
 #   # async ingest path (backends + arq worker); run the API on the host:
 #   docker compose -f infra/docker-compose.yml up -d qdrant postgres redis ingest-worker
+#   # full baked-image app path (backends + containerized API + arq worker):
+#   docker compose -f infra/docker-compose.yml up -d qdrant postgres redis api ingest-worker
 #
 # Secrets below are DEV-ONLY defaults for a local machine. Do not reuse them in
 # any shared/production deployment. Langfuse self-host docs:
@@ -40,6 +42,33 @@ services:
       timeout: 5s
       retries: 10
 
+  # ── App: baked API image (SP9) ─────────────────────────────────────────────
+  # Production-style image built from the repo-root Dockerfile (no bind-mount —
+  # source is baked in). Shares on-disk ingest state (.cache: blobs/sparse
+  # index/manifest) with ingest-worker via the app_shared_cache named volume so
+  # documents uploaded through the API are visible to the worker and vice versa.
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: "redis://:dev-redis-change-me@redis:6379"
+      QDRANT_URL: "http://qdrant:6333"
+      PG_DSN: "postgresql://rag:rag@postgres:5432/rag"
+      DOC_REGISTRY_BACKEND: postgres
+    volumes:
+      - app_shared_cache:/app/.cache
+
   # ── App: async ingest worker (arq) ─────────────────────────────────────────
   # Drains the `POST /documents` jobs the API enqueues and runs the ingest
   # pipeline (parse → PII → chunk → embed → dense+sparse). Shares on-disk state
@@ -48,7 +77,9 @@ services:
   # keys (EMBED_*/CONTEXT_*) are read from the mounted .env like any host process.
   #
   # Dev-only pattern: run straight from the uv image, syncing deps on start into a
-  # cached named volume. A baked application image belongs to SP9 (deployability).
+  # cached named volume. A baked application image now exists (see `api` above /
+  # SP9), but ingest-worker stays on this dev pattern so the bind-mounted source
+  # is picked up without a rebuild.
   #
   #   docker compose -f infra/docker-compose.yml up -d qdrant postgres redis ingest-worker
   ingest-worker:
@@ -77,6 +108,7 @@ services:
     volumes:
       - ../:/workspace                 # source + shared .cache (blobs/sparse/manifest)
       - ingest_worker_venv:/opt/venv   # Linux venv, isolated from the host .venv
+      - app_shared_cache:/workspace/.cache   # same named volume as `api`, so both see the same .cache
     command: >
       sh -c "uv sync --extra app --frozen && exec uv run --no-sync arq ingest.worker.WorkerSettings"
 
@@ -234,6 +266,7 @@ volumes:
   qdrant_storage:
   pgdata:
   ingest_worker_venv:
+  app_shared_cache:   # shared .cache (blobs/sparse index/manifest) between `api` and `ingest-worker`
   langfuse_pgdata:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
