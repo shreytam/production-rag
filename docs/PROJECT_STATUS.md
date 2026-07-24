@@ -25,9 +25,9 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 | **Eval baseline** | ✅ Langfuse-native eval (`eval.experiment` + `eval.gate` + `eval.dataset_cli`); a live `baseline` dataset run still needs producing |
 | **Semantic cache** | ✅ Decomposition E implemented (plumbing + fake + live smoke) — opt-in, off by default; live baseline / enabling in a real environment deferred |
 | **Observability** | ✅ Langfuse v4 (OTel) wired; ⚠️ off by default, leaks raw queries when on |
-| **Git** | Clean working tree except untracked `docs/` audit + this file. Private repo `git@github.com:ShreytamGoyal/production-rag.git` |
+| **Git** | Private repo `git@github.com:ShreytamGoyal/production-rag.git`; `main` at `0e16528` (2026-07-24). |
 
-**One-line verdict:** The system has the *shape* of production RAG and a real, working pipeline — but several advertised safety/quality guarantees are inert or bypassable at the point they matter. It runs; it is not safe to expose. Full detail in [`PRODUCTION_READINESS_AUDIT.md`](./PRODUCTION_READINESS_AUDIT.md).
+**One-line verdict (reconciled 2026-07-24):** A real, working pipeline whose core safety/correctness gaps from the original audit are now **closed in code** — auth, output-block containment, ingest PII redaction, pre-trace query redaction, and true hybrid retrieval all landed (see §8). What remains before real traffic is operational, not safety-critical: a live eval `baseline` (Decomposition D) so the CI gate can catch regressions, a Qdrant-client timeout/retry, and deploy packaging (Dockerfile, rate limiting). _(The detailed line-by-line auto-audit `PRODUCTION_READINESS_AUDIT.md` was a session-time artifact and is not committed to the repo; §8 below is the authoritative, current summary.)_
 
 ---
 
@@ -116,7 +116,7 @@ tests/           11 files, 188 test functions, _fakes.py for injection;
                  tests/cache/ (FakeSemanticCache + offline cache suite)
 infra/           docker-compose.yml (Redis 8), .env.example
 docs/            superpowers/{specs,plans}/ (cache design + plan),
-                 PRODUCTION_READINESS_AUDIT.md, PROJECT_STATUS.md (this file)
+                 architecture.md, PROJECT_STATUS.md (this file)
 .github/         workflows/eval-gate.yml
 ```
 
@@ -195,36 +195,42 @@ Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_K
 
 ## 8. What's NOT production-grade (audit summary)
 
-Full report: [`docs/PRODUCTION_READINESS_AUDIT.md`](./PRODUCTION_READINESS_AUDIT.md) — 96 verified findings (10 critical, 10 high, 60 medium, 16 low).
+> **Reconciled 2026-07-24 against current `main` (`0e16528`).** The original
+> auto-audit (`PRODUCTION_READINESS_AUDIT.md`, 96 findings — a session-time
+> artifact, **not committed to this repo**) predates the A–E decompositions and
+> the security/pivot work; **5 of its 7 "P0 blockers" are now fixed in code** and
+> are struck through below with the fix location. This section is the current,
+> authoritative truth.
 
-### P0 blockers (fix before any real traffic)
-1. **No authentication — tenant is client-controlled** (`app/api.py:77`). `X-Tenant-Id` header / body sets the tenant; the ACL faithfully scopes to whatever the attacker names → read any tenant's corpus. _Verified._
-2. **Blocked answers returned verbatim** (`core/pipeline.py:153`). Output guard sets `refused=True` but never overwrites `ans.text` → the "blocked" content still ships. _Verified._
-3. **PII never redacted at ingest** (`ingest/run.py:51`). `PIIRedactor` isn't called; corpus PII embedded + stored in cleartext across all stores.
-4. **Raw query logged to Langfuse pre-redaction** (`core/pipeline.py:91`). 100% sample rate; defeats the PII guardrails.
-5. **API silently runs dense-only** (`app/api.py:32`). Built with `dataset=None` → BM25 empty → "hybrid" isn't what runs.
-6. **CI eval gate can't catch regressions until a baseline run exists.** The Langfuse-native gate (`eval.gate`) needs a `baseline` dataset run on the hosted Langfuse; until one is produced, the gate has nothing to compare against.
-7. **No timeouts/retries on hot-path calls** (`retrieval/hybrid.py` + stores/reranker). One slow dependency 500s every query and hangs threads → outage.
+### P0 blockers — reconciled status
+1. ~~**No authentication — tenant is client-controlled**~~ → ✅ **FIXED.** Tenant identity comes ONLY from a cryptographically verified JWT (`app/auth.py:require_principal`, wired at `app/api.py:76`); `QueryRequest` carries no identity field; missing/invalid token → 401.
+2. ~~**Blocked answers returned verbatim**~~ → ✅ **FIXED.** An output-guardrail BLOCK overwrites `ans.text` with a generic refusal and scrubs every metadata copy (`core/pipeline.py:258-274`); the block reason stays only in the trace.
+3. ~~**PII never redacted at ingest**~~ → ✅ **FIXED.** `_apply_pii_ingest_policy` redacts document text before chunking and **fails closed** on detector error (`ingest/run.py:38-109`); `pii_mode` defaults to `"redact"` (`core/config.py:137`). `keep` mode tags + audits instead.
+4. ~~**Raw query logged to Langfuse pre-redaction**~~ → ✅ **FIXED.** The input guard runs and redaction is applied BEFORE the root trace span is created; a blocked query traces as `"[BLOCKED]"` (`core/pipeline.py:109-137`).
+5. ~~**API silently runs dense-only**~~ → ✅ **FIXED.** `app/api.py:33` builds `version="full"` (hybrid); the sparse tier is a per-tenant `TenantSparseStore` resolved at query time (not a build-time `dataset` pickle), so BM25 is populated per caller.
+6. **CI eval gate can't catch regressions until a baseline run exists.** ❌ **STILL OPEN** — the one genuine P0 left. The Langfuse-native gate (`eval.gate`) needs a `baseline` dataset run on hosted Langfuse (+ `LANGFUSE_*` / `NVIDIA_API_KEY` repo secrets); until one exists the gate has nothing to compare against. **= Decomposition D.**
+7. **Timeouts/retries on hot-path calls.** ⚠️ **MOSTLY FIXED.** Embedder + generator use the OpenAI SDK's `max_retries=5` and `request_timeout_seconds` (`core/config.py:87-88`, `core/registry.py:101-102`); the NIM reranker uses a `tenacity` `@retry` with exponential backoff (`providers/rerankers/nim_rerank.py:31`). **Residual:** the Qdrant client is constructed with no explicit timeout and no retry wrapper (`providers/vectorstores/qdrant_store.py:71`), and the default `request_timeout_seconds=600.0` is very generous for a query hot path.
 
-### Recurring themes
-- **Guardrails are theatrical** — present but bypassable (regex-only injection, no indirect-injection scan, output block leaks content).
-- **"Green but wrong"** — dense-only fallback, $0 Anthropic cost, NaN-passes-gate, tracing swallows all errors.
-- **Security-critical paths untested in CI** — real ACL filter tests self-skip when no DB is present; the offline isolation test checks a *fake*.
-- **Not packaged for deploy** — no Dockerfile, no config validation at boot, no rate limiting / request caps.
+### Recurring themes — reconciled
+- **Guardrails** — output-block leak is fixed (see #2); an **indirect-injection scan** now runs over retrieved chunk text and flags `indirect_injection_suspected` (`core/pipeline.py:184-189`, detection + log, non-blocking). Input injection is still primarily regex-based with optional LLM escalation — hardened, not exhaustive.
+- **"Green but wrong"** — dense-only fallback fixed (#5); **NaN-passes-gate fixed** (`eval/gate.py:74-82` treats `nan` CI-bound / thresholds as non-passing). Not re-checked this pass: the `$0 Anthropic-path cost` display and whether tracing over-swallows errors.
+- **Security-critical paths in CI** — the `acl-isolation` CI job now runs the **real** ACL/isolation suites (`tests/test_stores_acl.py`, `tests/test_multitenant_isolation.py`) against live Qdrant + Postgres service containers (Qdrant readiness gated host-side after the healthcheck fix). Real filters are exercised in CI, not just a fake.
+- **Not packaged for deploy** — config **is** validated at boot (4 `@model_validator(mode="after")` in `core/config.py`) and a `/healthz` exists (`app/api.py:68`). **Still open:** no `Dockerfile`, and no true rate limiting (only an 8000-char question cap, `max_question_chars`).
 
-> ✏️ **Correction to the auto-audit:** it flagged the `infra/.env` NVIDIA key as "rotate today." Verified: the key is **gitignored and never tracked in git** — it has never left the machine. It's local hygiene (add a `.dockerignore` before containerizing), not an emergency.
+> ✏️ **Note on the `infra/.env` NVIDIA key:** the auto-audit flagged it "rotate today." It is **gitignored and never tracked in git** — local hygiene (add a `.dockerignore` before containerizing), not an emergency.
 
 ---
 
 ## 9. Open work / next steps
 
-**Priority order (my recommendation):**
-1. **P0 security batch** — auth (#1) + guardrail-leak (#2). Pure security, TDD-able, touches existing code.
-2. **P0 correctness batch** — wire BM25 into the API (#5), ingest PII redaction (#3), Langfuse redaction (#4).
-3. **Make the eval gate real** — seed the hotpotqa Langfuse dataset, run `eval.experiment --run-name baseline`, then the CI gate (`eval.gate`) has a baseline to compare against (#6). _(Historically blocked on a working NIM key.)_
-4. **Resilience** — timeouts + retries + partial-failure fallback on all external calls (#7).
-5. **Deployability** — Dockerfile, config validation at boot, real `/healthz`, rate limiting.
-6. **Done:** the semantic cache (Decomposition E, `docs/superpowers/plans/2026-07-24-decomposition-e-semantic-cache.md`) — plumbing, `FakeSemanticCache`, `RedisVLSemanticCache`, infra/deps/docs. Remaining: run `uv sync --extra cache` against a real Redis 8, flip `CACHE_ENABLED=true`, and measure a live hit-rate/latency baseline.
+The P0 security/correctness batches from the original audit are **done** (see §8, items #1–#5). What genuinely remains:
+
+**Priority order (recommendation):**
+1. **Make the eval gate real — Decomposition D (#6).** Seed the hotpotqa Langfuse dataset, add `LANGFUSE_*` + `NVIDIA_API_KEY` repo secrets, run `eval.experiment --run-name baseline` on hosted Langfuse; then CI's `eval.gate` has a baseline to compare against. **This is the highest-value remaining task** — it's what makes the whole CI gate functional.
+2. **Semantic cache go-live.** `uv sync --extra cache`, flip `CACHE_ENABLED=true` in a real env, and measure a hit-rate/latency baseline. The redis-vl call surface is already verified (live smoke passed, PR #12); rides naturally on D's baseline infra.
+3. **Close the #7 residual.** Give the Qdrant client an explicit timeout + a retry wrapper, and reconsider the 600s default timeout for the query hot path.
+4. **Deployability.** Add a `Dockerfile` (+ `.dockerignore`) and real rate limiting / request caps. (Config boot-validation and `/healthz` already exist.)
+5. **Deferred perf nit (E).** A cache miss re-embeds the query the retriever also embeds — thread the query vector into the retriever interface to avoid the double embed.
 
 **Parked:** full-suite eval baseline → README metrics table; stand up the 6-container Langfuse stack for a live trace; `full`-version run + `eval.gate` lift table.
 
@@ -234,7 +240,7 @@ Full report: [`docs/PRODUCTION_READINESS_AUDIT.md`](./PRODUCTION_READINESS_AUDIT
 
 | What | Where |
 |---|---|
-| Full production audit | `docs/PRODUCTION_READINESS_AUDIT.md` |
+| Production readiness (current) | §8 of this file (reconciled 2026-07-24). The line-by-line `PRODUCTION_READINESS_AUDIT.md` was a session-time artifact and is **not committed**. |
 | Cache design spec (superseded) | `docs/superpowers/specs/2026-06-27-rag-cache-design.md` |
 | Cache implementation plan (superseded, 12 tasks) | `docs/superpowers/plans/2026-06-27-rag-cache.md` |
 | Semantic cache design (Decomposition E, implemented) | `docs/superpowers/specs/2026-07-24-decomposition-e-semantic-cache-design.md` |
