@@ -23,8 +23,9 @@ providers/              ← Swappable implementations of core.interfaces
   embedders/            ← OpenAICompatibleEmbedder (NIM or OpenAI)
   generators/           ← OpenAICompatibleGenerator, AnthropicGenerator
   rerankers/            ← LocalCrossEncoderReranker (BGE), NIMReranker
+  rewriter/             ← HybridQueryRewriter (SP12: synonym + LLM expansion)
   sparse/               ← BM25Retriever (rank-bm25)
-  vectorstores/         ← QdrantStore, PgvectorStore
+  vectorstores/         ← QdrantStore (Qdrant-only)
 
 ingest/
   run.py                ← CLI entry point: loads → chunks → embeds → upserts + BM25 index
@@ -154,10 +155,15 @@ User request (question: str, caller_acl: ACLContext)
     ▼
 InjectionGuardrail.check(question)
     │  BLOCK → return error immediately
-    ▼ PASS
+    ▼ PASS (redacted)
+QueryRewriter.rewrite(question, acl)   [SP12; retrieval_question only]
+    │  synonym tier: rewriter:synonyms:{tenant_id} (Redis, per-tenant)
+    │  LLM tier: expand acronyms/shorthand when ≥ threshold words, no synonym hit
+    │  fail-soft → best-effort query on any Redis/LLM error
+    ▼ (generation keeps the ORIGINAL question)
 RAGPipeline.run(question, acl)
     │
-    ├─ DenseRetriever.retrieve(Query)
+    ├─ DenseRetriever.retrieve(Query)   [Query.text = retrieval_question]
     │     │  Embedder.embed_query(question) → Vector
     │     │  VectorStore.search(vector, top_k=20, acl) → list[ScoredChunk]
     │     └─ returns list[ScoredChunk]
@@ -176,6 +182,30 @@ RAGPipeline.run(question, acl)
           │  reconcile citation markers → list[Citation]
           └─ returns Answer { text, citations, contexts, usage, refused }
 ```
+
+---
+
+## Query Rewriting (`providers/rewriter/`, SP12)
+
+`HybridQueryRewriter` runs **after** input-guard redaction and **before** the
+cache-key embed, so both cache tiers key on the rewritten query. Two tiers:
+
+- **Synonym tier (deterministic, ~0ms):** reads the per-tenant hash
+  `rewriter:synonyms:{tenant_id}` from the shared Redis (`redis_url`) and does
+  case-insensitive word-boundary substitution (`"NYPD" → "New York Police
+  Department"`). Longer shortcuts win over their substrings. Hostile tenant
+  isolation: a tenant's dictionary can never affect another's rewrite.
+- **LLM tier (fallback):** when no synonym matched and the query has ≥
+  `rewriter_llm_threshold` words, one cheap (`context`-role) generator call
+  expands acronyms/shorthand into a descriptive search statement.
+
+**Retrieval-only:** the rewritten query feeds the cache key and
+`Query.text`; **generation and the output-guard context keep the original
+question** so the model answers what the user actually asked. **Fail-soft:** any
+Redis or LLM error degrades to the best-effort query and never raises into the
+query path. `core/config.py` knobs: `rewriter_enabled` (default `True`),
+`rewriter_llm_enabled` (default `True`), `rewriter_llm_threshold` (default `5`).
+Enabled in eval runs (G4) so the gate measures its recall impact.
 
 ---
 

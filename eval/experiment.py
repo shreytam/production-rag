@@ -79,8 +79,10 @@ def main() -> None:
 
     settings = get_settings()
     run_name = args.run_name or f"{args.version}@{_git_sha()}-{int(time.time())}"
+    # Rewriter ON (SP12 G4): eval must measure query-rewriting's recall impact.
     pipeline = build_pipeline(version=args.version, corpus=args.dataset,
-                              enable_guardrails=False, enable_cache=False)
+                              enable_guardrails=False, enable_cache=False,
+                              enable_rewriter=True)
     run(
         backend=build_backend(settings),
         pipeline=pipeline,
