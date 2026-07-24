@@ -182,6 +182,11 @@ class Settings(BaseSettings):
     redis_password: str = ""
     ingest_queue_name: str = "ingest"
 
+    # --- Semantic cache (Redis 8 / redis-vl; opt-in) ---
+    cache_enabled: bool = False
+    cache_similarity_threshold: float = 0.9
+    cache_ttl_seconds: int = 3600
+
     @model_validator(mode="after")
     def _apply_llm_router(self) -> "Settings":
         """Point every model role at one OpenAI-compatible router unless the role
