@@ -11,6 +11,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from cache.semantic_cache import (
+    answer_from_payload, answer_to_payload, doc_ids_of,
+    scored_from_payload, scored_to_payload,
+)
 from core.config import Settings, get_settings
 from core.registry import (
     build_embedder,
@@ -60,6 +64,9 @@ class RAGPipeline:
         settings: Settings,
         tracer: Tracer | None = None,
         guardrails: GuardrailRunner | None = None,
+        embedder=None,
+        answer_cache=None,
+        retrieval_cache=None,
     ):
         self.retriever = retriever
         self.grounded = grounded
@@ -69,6 +76,9 @@ class RAGPipeline:
         self.tracer = tracer or Tracer(settings)
         # None => guardrails disabled (eval path); otherwise enforced per query.
         self.guardrails = guardrails
+        self.embedder = embedder
+        self.answer_cache = answer_cache
+        self.retrieval_cache = retrieval_cache
 
     def _refused(self, message: str, results: list) -> Answer:
         """Build a well-formed refused Answer (no retrieval/generation ran)."""
@@ -130,6 +140,21 @@ class RAGPipeline:
                 with self.tracer.span("guardrail.input") as s_in:
                     s_in.update(output={"actions": [r.action.value for r in in_results]})
 
+            # --- Semantic cache: answer tier -----------------------------------
+            cache_on = self.answer_cache is not None or self.retrieval_cache is not None
+            key_vec = None
+            if cache_on and self.embedder is not None:
+                key_vec = self.embedder.embed_query(question)
+            if key_vec is not None and self.answer_cache is not None:
+                hit = self.answer_cache.lookup(
+                    tenant_id=acl.tenant_id, collection_id=collection_id, embedding=key_vec)
+                if hit is not None:
+                    root.update(output={"cache": "answer_hit"})
+                    cached = answer_from_payload(hit)
+                    cached.metadata.setdefault("stage_latencies_ms", {})
+                    cached.metadata["cache"] = "answer_hit"
+                    return cached
+
             q = Query(
                 text=question,
                 acl=acl,
@@ -139,9 +164,23 @@ class RAGPipeline:
             )
 
             with self.tracer.span("retrieval", top_k=q.top_k) as s_ret:
-                scored, ms = timed(self.retriever.retrieve)(q)
-                latencies["retrieval_ms"] = ms
-                s_ret.update(output={"n_hits": len(scored)})
+                scored = None
+                if key_vec is not None and self.retrieval_cache is not None:
+                    rhit = self.retrieval_cache.lookup(
+                        tenant_id=acl.tenant_id, collection_id=collection_id, embedding=key_vec)
+                    if rhit is not None:
+                        scored = scored_from_payload(rhit)
+                        latencies["retrieval_ms"] = 0.0
+                        s_ret.update(output={"cache": "retrieval_hit", "n_hits": len(scored)})
+                if scored is None:
+                    scored, ms = timed(self.retriever.retrieve)(q)
+                    latencies["retrieval_ms"] = ms
+                    s_ret.update(output={"n_hits": len(scored)})
+                    if key_vec is not None and self.retrieval_cache is not None:
+                        self.retrieval_cache.store(
+                            tenant_id=acl.tenant_id, collection_id=collection_id,
+                            embedding=key_vec, payload=scored_to_payload(scored),
+                            doc_ids=doc_ids_of(scored))
                 suspected = sorted({
                     lbl for sc in scored for lbl in scan_for_injection(sc.chunk.text)
                 })
@@ -232,6 +271,15 @@ class RAGPipeline:
                     r.pop("reason", None)
                     r.pop("payload", None)
                     r.pop("metadata", None)
+
+        # --- Semantic cache: store the answer only when fully clean -----------
+        if (key_vec is not None and self.answer_cache is not None
+                and not ans.refused
+                and ans.metadata.get("blocked_by") != "output_guardrail"):
+            self.answer_cache.store(
+                tenant_id=acl.tenant_id, collection_id=collection_id,
+                embedding=key_vec, payload=answer_to_payload(ans),
+                doc_ids=ans.metadata.get("retrieved_doc_ids", []))
         return ans
 
     def run(
@@ -259,6 +307,7 @@ def build(
     corpus: str | None = None,
     settings: Settings | None = None,
     enable_guardrails: bool | None = None,
+    enable_cache: bool | None = None,
 ) -> RAGPipeline:
     """Construct a pipeline version from config.
 
@@ -292,4 +341,12 @@ def build(
     use_guards = s.guardrails_enabled if enable_guardrails is None else enable_guardrails
     guardrails = default_runner(generator=generator) if use_guards else None
 
-    return RAGPipeline(retriever, grounded, s, guardrails=guardrails)
+    use_cache = s.cache_enabled if enable_cache is None else enable_cache
+    answer_cache = retrieval_cache = None
+    if use_cache:
+        from cache.semantic_cache import build_cache
+        answer_cache, retrieval_cache = build_cache(s)
+
+    return RAGPipeline(retriever, grounded, s, guardrails=guardrails,
+                       embedder=embedder, answer_cache=answer_cache,
+                       retrieval_cache=retrieval_cache)
