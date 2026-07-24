@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from core.types import PIISpan
 from core.interfaces import PIIDetector
@@ -32,18 +34,62 @@ def test_build_pii_detector_fallback():
     det = build_pii_detector(settings)
     assert isinstance(det, RegexPIIDetector)
 
-def test_presidio_detector_lazy_check():
-    # If pii-ner extras are not installed, initializing PresidioPIIDetector or calling its builder
-    # should raise an ImportError with a clear extra dependency notification message.
-    # We will simulate missing dependencies or assert behavior.
+def test_presidio_detector_reports_missing_extra(monkeypatch):
+    # Without the pii-ner extra, _ensure_presidio must raise ImportError naming the
+    # extra to install. Setting the module to None in sys.modules makes the import
+    # fail the same way a missing install would, without uninstalling anything.
+    monkeypatch.setitem(sys.modules, "presidio_analyzer", None)
     detector = PresidioPIIDetector()
-    # If libraries are available, test classification; otherwise expect ImportError if not installed.
-    try:
-        import presidio_analyzer  # noqa: F401 — availability probe: raises ImportError if extra missing
-        spans = detector.detect("My name is John Doe.")
-        types = {s.type for s in spans}
-        assert "PERSON" in types or len(types) >= 0
-    except ImportError:
-        with pytest.raises(ImportError) as exc_info:
-            detector._ensure_presidio()
-        assert "pip install" in str(exc_info.value)
+    with pytest.raises(ImportError) as exc_info:
+        detector._ensure_presidio()
+    assert "pii-ner" in str(exc_info.value)
+
+
+def test_presidio_detector_never_downloads_a_model(monkeypatch):
+    """Presidio's default spaCy engine calls spacy.cli.download() — a live
+    `pip install` of a ~560 MB wheel from GitHub — when the model is absent. That
+    is unacceptable in a request path: it needs network egress and a writable
+    venv, and spaCy's run_command calls sys.exit(1) on failure, surfacing as an
+    uncatchable SystemExit. We must pre-empt it with an actionable error instead.
+    """
+    pytest.importorskip("presidio_analyzer")
+    import spacy
+    import spacy.cli
+
+    # Make the model look absent, mirroring presidio's own condition:
+    #   if not (spacy.util.is_package(name) or Path(name).exists()): download(name)
+    monkeypatch.setattr(spacy.util, "is_package", lambda name: False)
+
+    def _forbidden_download(*args, **kwargs):
+        raise AssertionError(
+            "spacy.cli.download() was called at runtime — the detector must refuse "
+            "to fetch a model instead of pip-installing one mid-request."
+        )
+
+    monkeypatch.setattr(spacy.cli, "download", _forbidden_download)
+
+    detector = PresidioPIIDetector()
+    with pytest.raises(RuntimeError) as exc_info:
+        detector.detect("My name is John Doe.")
+
+    message = str(exc_info.value)
+    assert "en_core_web_lg" in message          # names the model it needs
+    assert "spacy download" in message          # tells the operator how to fix it
+
+
+def test_presidio_detector_detects_person_when_model_installed():
+    # Runs only where the spaCy model is already present, so the "offline" suite
+    # never depends on ambient machine state (this passed locally but failed in CI
+    # for exactly that reason before the download guard existed).
+    pytest.importorskip("presidio_analyzer")
+    import spacy
+
+    model = "en_core_web_lg"
+    if not spacy.util.is_package(model):
+        pytest.skip(f"spaCy model {model} not installed: python -m spacy download {model}")
+
+    spans = PresidioPIIDetector().detect("My name is John Doe.")
+    assert "PERSON" in {s.type for s in spans}
+    for s in spans:
+        assert isinstance(s, PIISpan)
+        assert s.start < s.end
