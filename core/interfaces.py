@@ -101,6 +101,14 @@ class Reranker(Protocol):
 
 
 @runtime_checkable
+class QueryRewriter(Protocol):
+    """Rewrites/expands a query for retrieval. MUST be fail-soft: any internal
+    error returns a best-effort query rather than raising into the query path."""
+
+    def rewrite(self, query: str, acl: ACLContext) -> str: ...
+
+
+@runtime_checkable
 class Generator(Protocol):
     """LLM text generation. When `response_model` is given, the implementation
     must coerce output into that schema and populate `LLMResponse.parsed`."""
