@@ -80,6 +80,8 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 ### Infrastructure (`infra/docker-compose.yml`)
 - **App backends:** Qdrant (`:6333`), Postgres/pgvector (`:5432`), Redis 8 (`:6379` — arq queue + optional semantic cache)
 - **Langfuse v3 self-host stack (6 services):** web + worker + postgres + clickhouse + redis + minio
+  (the `redis` here is the **same single Redis 8 container** listed under app backends above — one
+  container, both roles: arq queue + semantic cache, and Langfuse's own queue/cache)
 - **CI:** GitHub Actions — `eval-gate.yml` (lint + pytest on every PR; eval job intended to gate on regression)
 
 > **Note:** There is **no Dockerfile for the app itself** yet — the only documented launch is a single-worker `uvicorn` dev server. This is a deployability gap (see audit P1).
@@ -184,6 +186,8 @@ Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_K
 | CI eval gate | ✅ Langfuse-native | `eval.experiment` → `eval.gate` (paired-bootstrap and/or thresholds, scores read back from Langfuse); needs a `baseline` dataset run |
 | Observability (Langfuse v4, cost) | ⚠️ | works, but off by default and leaks raw queries when on; $0 cost on Anthropic path |
 | Semantic cache (answer + retrieval tiers, Redis 8/redis-vl) | ✅ Decomposition E | plumbing + `FakeSemanticCache` + `RedisVLSemanticCache` + live smoke; tenant/collection-isolated, targeted eviction + TTL backstop, eval bypass; **off by default** — enabling against a live Redis 8 + producing a cache-hit baseline is deferred |
+
+> **Before enabling the semantic cache:** run `CACHE_LIVE_SMOKE=1 .venv/bin/python -m pytest tests/test_cache_live_smoke.py` against a real Redis 8 to verify the redis-vl call surface (`index.load(..., ttl=)`, `index.drop_keys(...)`, `index.create(overwrite=False)`, `VectorQuery`/`FilterQuery`/`Tag` field names, cosine `vector_distance` in `[0, 2]`). The cache stays default-off (`CACHE_ENABLED=false`) until that smoke test has passed.
 
 **Measured numbers (local, not committed):** HotpotQA baseline recall@5 ≈ 0.93, MRR ≈ 0.98, nDCG@5 ≈ 0.90 (N=50, bge-m3). The README metrics table is still TBD and no `baseline` Langfuse dataset run has been produced yet (eval plumbing is in place; running a live baseline is a separate step).
 

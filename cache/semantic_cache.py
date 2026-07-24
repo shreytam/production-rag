@@ -8,7 +8,7 @@ redis-vl package, so lint and the offline suite stay infra-free.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Sequence
 
 from core.types import Answer, ScoredChunk
 
@@ -23,7 +23,6 @@ def norm_collection(collection_id: str | None) -> str:
     return collection_id if collection_id else COLLECTION_NONE
 
 
-@runtime_checkable
 class SemanticCache(Protocol):
     def lookup(self, *, tenant_id: str, collection_id: str | None,
                embedding: Sequence[float]) -> dict | None: ...

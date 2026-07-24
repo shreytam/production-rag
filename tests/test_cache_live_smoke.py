@@ -1,3 +1,15 @@
+"""Live smoke test for the redis-vl-backed `SemanticCache` — the ACCEPTANCE GATE
+for the redis-vl call surface this backend depends on: `index.load(..., ttl=)`,
+`index.drop_keys(...)`, `index.create(overwrite=False)`, the `VectorQuery` /
+`FilterQuery` / `Tag` field names used in `cache/_redisvl_backend.py`, and that
+cosine `vector_distance` really is returned in `[0, 2]` (so
+`_distance_threshold()`'s `1 - similarity` conversion is correct). None of that
+call surface is exercised by the offline suite (which only drives
+`FakeSemanticCache`), so this test — run against a real Redis 8 with
+`CACHE_LIVE_SMOKE=1` — MUST pass before `CACHE_ENABLED=true` is ever set in any
+environment.
+"""
+
 import os
 
 import pytest

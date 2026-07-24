@@ -90,3 +90,84 @@ def test_no_cache_wired_is_a_total_bypass():
                     answer_cache=None, retrieval_cache=None)
     ans = p.answer("hello")
     assert ret.calls == 1 and gen.calls == 1 and ans.text == "ans:hello"
+
+
+# --- FIX 2: `core.pipeline.build()` must honor an explicit `enable_cache`
+# override even when `settings.cache_enabled` says otherwise. Eval entry
+# points rely on `enable_cache=False` to guarantee the cache never confounds
+# metrics, regardless of what's set in the environment. Real `build()` is
+# exercised end-to-end (not the FakeSemanticCache path above): the component
+# builders it calls (`core.registry.build_embedder/build_vector_store/
+# build_generator`) are monkeypatched to lightweight stubs so no network/infra
+# is touched, and `version="baseline"` avoids the reranker/sparse builders.
+# `build_cache()` itself never connects to Redis (see cache/_redisvl_backend.py
+# — the redis-vl import is lazy, inside method bodies only), so exercising the
+# `enable_cache=True/None` branch stays fully offline and import-isolated too.
+
+class _StubEmbedder:
+    model = "stub-embed"
+    def embed_query(self, text): return [0.0]
+    def embed_documents(self, texts): return [[0.0] for _ in texts]
+
+
+class _StubVectorStore:
+    def search(self, *a, **k): return []
+
+
+class _StubGenerator:
+    model = "stub-gen"
+
+
+def _patch_component_builders(monkeypatch):
+    import core.pipeline as pipeline_mod
+    monkeypatch.setattr(pipeline_mod, "build_embedder", lambda settings=None: _StubEmbedder())
+    monkeypatch.setattr(pipeline_mod, "build_vector_store", lambda settings=None: _StubVectorStore())
+    monkeypatch.setattr(pipeline_mod, "build_generator",
+                        lambda role="gen", settings=None: _StubGenerator())
+
+
+def test_build_enable_cache_false_wires_no_cache_even_if_settings_enabled(monkeypatch):
+    import core.pipeline as pipeline_mod
+    from core.config import Settings
+
+    _patch_component_builders(monkeypatch)
+    s = Settings(cache_enabled=True)
+    pipeline = pipeline_mod.build(version="baseline", settings=s, enable_cache=False)
+    assert pipeline.answer_cache is None
+    assert pipeline.retrieval_cache is None
+
+
+def test_build_enable_cache_none_or_true_wires_cache_when_settings_enabled(monkeypatch):
+    import core.pipeline as pipeline_mod
+    from core.config import Settings
+
+    _patch_component_builders(monkeypatch)
+    s = Settings(cache_enabled=True)
+
+    p_none = pipeline_mod.build(version="baseline", settings=s, enable_cache=None)
+    assert p_none.answer_cache is not None
+    assert p_none.retrieval_cache is not None
+
+    p_true = pipeline_mod.build(version="baseline", settings=s, enable_cache=True)
+    assert p_true.answer_cache is not None
+    assert p_true.retrieval_cache is not None
+
+
+# --- Nice-to-have: the two eval entry points must literally pass
+# `enable_cache=False` at their `build(...)` call sites, by source inspection
+# (no need to run their full `main()`, which has heavier side effects).
+
+def test_eval_experiment_main_forces_cache_off():
+    import inspect
+
+    import eval.experiment as experiment_mod
+    src = inspect.getsource(experiment_mod.main)
+    assert "enable_cache=False" in src
+
+
+def test_eval_ragas_adapter_main_forces_cache_off():
+    import inspect
+
+    import eval.ragas_adapter as ragas_mod
+    src = inspect.getsource(ragas_mod.main)
+    assert "enable_cache=False" in src
