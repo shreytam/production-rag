@@ -3,7 +3,9 @@ lazily inside method bodies — constructing an instance requires neither Redis 
 the redis-vl package, so build_cache stays importable in the offline suite.
 
 Schema per tier (one RediSearch index): a COSINE vector field plus tenant_id,
-collection_id and doc_ids TAG fields and a payload text field. The doc_ids TAG is
+collection_id and doc_ids TAG fields and a cache_payload text field (NOT named
+"payload" — that word is a reserved keyword arg on redis-py's search Document and
+collides at result-parse time). The doc_ids TAG is
 the reverse index that makes per-document eviction a filtered delete. Per-key TTL
 backstops the new-document blind spot.
 """
@@ -34,7 +36,7 @@ class RedisVLSemanticCache:
                 {"name": "tenant_id", "type": "tag"},
                 {"name": "collection_id", "type": "tag"},
                 {"name": "doc_ids", "type": "tag", "attrs": {"separator": "|"}},
-                {"name": "payload", "type": "text"},
+                {"name": "cache_payload", "type": "text"},
                 {"name": "vector", "type": "vector", "attrs": {
                     "dims": self.settings.embed_dimension, "distance_metric": "cosine",
                     "algorithm": "flat", "datatype": "float32"}},
@@ -57,7 +59,7 @@ class RedisVLSemanticCache:
         flt = (Tag("tenant_id") == tenant_id) & \
               (Tag("collection_id") == norm_collection(collection_id))
         q = VectorQuery(vector=list(embedding), vector_field_name="vector",
-                        return_fields=["payload", "vector_distance"], num_results=1,
+                        return_fields=["cache_payload", "vector_distance"], num_results=1,
                         filter_expression=flt)
         results = index.query(q)
         if not results:
@@ -65,7 +67,7 @@ class RedisVLSemanticCache:
         top = results[0]
         if float(top["vector_distance"]) > self._distance_threshold():
             return None
-        return json.loads(top["payload"])
+        return json.loads(top["cache_payload"])
 
     def store(self, *, tenant_id, collection_id, embedding, payload, doc_ids) -> None:
         import numpy as np
@@ -76,7 +78,7 @@ class RedisVLSemanticCache:
             "tenant_id": tenant_id,
             "collection_id": norm_collection(collection_id),
             "doc_ids": "|".join(doc_ids) if doc_ids else "",
-            "payload": json.dumps(payload),
+            "cache_payload": json.dumps(payload),
             "vector": vec,
         }
         index.load([data], ttl=int(self.settings.cache_ttl_seconds))
