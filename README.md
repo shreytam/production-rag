@@ -177,7 +177,9 @@ eval: golden dataset → experiment → Langfuse scores → gate (baseline vs ne
 │   ├── api.py            # FastAPI: /query + /healthz (make api)
 │   ├── documents.py      # /documents router (async upload / list / get / delete)
 │   ├── auth.py           # require_principal — JWT → tenant identity
-│   └── demo.py           # Streamlit demo (make demo)
+│   ├── ui.py             # /ui test console + dev-token endpoint (make console)
+│   └── static/
+│       └── console.html  # single-page console: upload → ingest → query
 │
 ├── tests/                # Offline test suite (fakes, no secrets, no services)
 ├── infra/
@@ -280,9 +282,21 @@ make eval   DATASET=hotpotqa RUN=baseline                    # experiment → La
 make eval   DATASET=hotpotqa RUN=candidate
 make gate   DATASET=hotpotqa RUN=candidate                   # vs "baseline"; exits nonzero on regression
 
-# 5. Demo
-make demo                           # Streamlit on :8501
+# 5. Test console — upload a document, watch it ingest, query it
+make console                        # API + console on http://127.0.0.1:8000/ui
 ```
+
+The console drives the real HTTP API: it mints a JWT for a tenant you pick, uploads
+through `POST /documents`, polls status until the worker reports `ready`, then queries
+via `POST /query`. Because every action is an ordinary authenticated request, it
+exercises auth, tenant scoping, async ingest, and retrieval rather than an in-process
+shortcut. It needs the full stack up (`docker compose -f infra/docker-compose.yml up -d`)
+for upload to work end-to-end; `/query` alone only needs Qdrant.
+
+> **Security:** `/ui` and `/ui/token` mint dev credentials, so both return **404**
+> unless `AUTH_DEV_SIGNER_ENABLED=true` *and* `JWT_SECRET` are set. `core/config.py`
+> refuses to boot with that flag when `APP_ENV=prod`, so a production deploy exposes
+> neither route.
 
 > **Note on contextual prefixing:** pass `--contextual` to `ingest.run` to
 > enable per-chunk LLM context prefixes. This fires ~1 LLM call per chunk, so
@@ -439,7 +453,7 @@ Other operational dimensions scale similarly:
 | `make seed DATASET=X ITEMS=…` | Upload golden items to a Langfuse dataset |
 | `make eval DATASET=X RUN=R` | Run an eval experiment → Langfuse dataset run |
 | `make gate DATASET=X RUN=R` | Gate run R against the `baseline` run; exits nonzero on regression |
-| `make demo` | Launch the Streamlit demo on port 8501 |
+| `make console` | Launch the API + test console on http://127.0.0.1:8000/ui |
 | `make api` | Launch the FastAPI service on port 8000 (uvicorn --reload) |
 | `make test` | Run the test suite (`pytest`) |
 | `make lint` | Lint with ruff |

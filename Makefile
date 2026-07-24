@@ -32,10 +32,12 @@ gate:               ## Gate a run vs baseline:  make gate DATASET=hotpotqa RUN=m
 seed:               ## Seed a dataset:  make seed DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json
 	uv run python -m eval.dataset_cli seed --dataset $(DATASET) --items $(ITEMS)
 
-demo:               ## Launch the Streamlit demo
-	uv run streamlit run app/demo.py
-
 api:                ## Launch the FastAPI service
+	uv run uvicorn app.api:app --reload
+
+console:            ## Launch the API with the test console at http://127.0.0.1:8000/ui
+	AUTH_DEV_SIGNER_ENABLED=true \
+	JWT_SECRET=$${JWT_SECRET:-dev-console-secret-not-for-production!} \
 	uv run uvicorn app.api:app --reload
 
 test:               ## Run the test suite
