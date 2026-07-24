@@ -113,14 +113,18 @@ def build_generator(role: GeneratorRole = "gen", settings: Settings | None = Non
     raise ValueError(f"Unknown provider for role {role}: {provider}")
 
 
-def build_query_rewriter(settings: Settings | None = None) -> QueryRewriter:
+def build_query_rewriter(
+    settings: Settings | None = None, *, generator: Generator | None = None
+) -> QueryRewriter:
     """Build the SP12 query rewriter (deterministic synonym tier + LLM fallback).
-    Uses the cheap ``context`` generator role and the shared ``redis_url``."""
+    Uses the cheap ``context`` generator role and the shared ``redis_url``. A
+    pre-built ``generator`` may be injected (the pipeline passes one so a single
+    build seam stays monkeypatchable in tests)."""
     s = settings or get_settings()
     from providers.rewriter.hybrid_rewriter import HybridQueryRewriter
 
     return HybridQueryRewriter(
-        build_generator("context", s),
+        generator if generator is not None else build_generator("context", s),
         s.redis_url,
         llm_enabled=s.rewriter_llm_enabled,
         llm_threshold=s.rewriter_llm_threshold,

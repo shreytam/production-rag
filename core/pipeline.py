@@ -67,11 +67,14 @@ class RAGPipeline:
         embedder=None,
         answer_cache=None,
         retrieval_cache=None,
+        rewriter=None,
     ):
         self.retriever = retriever
         self.grounded = grounded
         self.settings = settings
         self.default_acl = ACLContext(tenant_id=DEFAULT_TENANT)
+        # SP12: rewrites the query for retrieval only (None => disabled).
+        self.rewriter = rewriter
         # No-op when langfuse is disabled — safe to always hold a tracer.
         self.tracer = tracer or Tracer(settings)
         # None => guardrails disabled (eval path); otherwise enforced per query.
@@ -140,11 +143,21 @@ class RAGPipeline:
                 with self.tracer.span("guardrail.input") as s_in:
                     s_in.update(output={"actions": [r.action.value for r in in_results]})
 
+            # --- Query rewriting (SP12): retrieval-only -------------------------
+            # Runs after input-guard redaction; feeds the cache key + retriever.
+            # Generation and the output-guard context keep the ORIGINAL question
+            # so the model answers what the user actually asked.
+            retrieval_question = question
+            if self.rewriter is not None:
+                with self.tracer.span("rewrite") as s_rw:
+                    retrieval_question = self.rewriter.rewrite(question, acl)
+                    s_rw.update(output={"rewritten": retrieval_question != question})
+
             # --- Semantic cache: answer tier -----------------------------------
             cache_on = self.answer_cache is not None or self.retrieval_cache is not None
             key_vec = None
             if cache_on and self.embedder is not None:
-                key_vec = self.embedder.embed_query(question)
+                key_vec = self.embedder.embed_query(retrieval_question)
             if key_vec is not None and self.answer_cache is not None:
                 hit = self.answer_cache.lookup(
                     tenant_id=acl.tenant_id, collection_id=collection_id, embedding=key_vec)
@@ -156,7 +169,7 @@ class RAGPipeline:
                     return cached
 
             q = Query(
-                text=question,
+                text=retrieval_question,
                 acl=acl,
                 top_k=self.settings.retrieve_top_k,
                 rerank_top_n=self.settings.rerank_top_n,
@@ -308,6 +321,7 @@ def build(
     settings: Settings | None = None,
     enable_guardrails: bool | None = None,
     enable_cache: bool | None = None,
+    enable_rewriter: bool | None = None,
 ) -> RAGPipeline:
     """Construct a pipeline version from config.
 
@@ -347,6 +361,14 @@ def build(
         from cache.semantic_cache import build_cache
         answer_cache, retrieval_cache = build_cache(s)
 
+    use_rewriter = s.rewriter_enabled if enable_rewriter is None else enable_rewriter
+    rewriter = None
+    if use_rewriter:
+        from core.registry import build_query_rewriter
+        # Build the cheap 'context' generator through the module-level seam so
+        # tests that stub build_generator stay offline.
+        rewriter = build_query_rewriter(s, generator=build_generator("context", s))
+
     return RAGPipeline(retriever, grounded, s, guardrails=guardrails,
                        embedder=embedder, answer_cache=answer_cache,
-                       retrieval_cache=retrieval_cache)
+                       retrieval_cache=retrieval_cache, rewriter=rewriter)
