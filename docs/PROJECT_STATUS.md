@@ -1,6 +1,6 @@
 # Production RAG — Project Status
 
-_Last updated: 2026-07-11. A cold-start orientation: what this project is, what's built, the tech stack, and what still needs fixing before it's production-grade. Read this first if you've been away from the codebase._
+_Last updated: 2026-07-24. A cold-start orientation: what this project is, what's built, the tech stack, and what still needs fixing before it's production-grade. Read this first if you've been away from the codebase._
 
 ---
 
@@ -8,7 +8,7 @@ _Last updated: 2026-07-11. A cold-start orientation: what this project is, what'
 
 A **production-grade Retrieval-Augmented Generation (RAG) system** built behind clean, swappable interfaces (no framework lock-in in the core). The thesis: most RAG demos glue an LLM to a vector DB and stop; this one adds the engineering discipline that comes *before* production — hybrid retrieval, reranking, contextual chunking, multi-tenant ACL isolation, guardrails, and a **rigorous eval harness with bootstrap confidence intervals wired into a CI gate**.
 
-It's a portfolio/foundation project, designed to be the reusable base for two later projects (Graph RAG, Multimodal RAG), so the core pipeline sits behind Python `Protocol` interfaces and **`core/registry.py` is the only module that names concrete implementations**. Swapping Qdrant↔pgvector, NIM↔OpenAI, or local↔NIM reranker is a one-line config change.
+It's a portfolio/foundation project, designed to be the reusable base for two later projects (Graph RAG, Multimodal RAG), so the core pipeline sits behind Python `Protocol` interfaces and **`core/registry.py` is the only module that names concrete implementations**. Swapping NIM↔OpenAI or local↔NIM reranker is a one-line config change, and adding a new vector store is a single file plus one registry branch.
 
 **Design principle:** one env var flips a provider; nothing outside `core/config.py` reads env directly.
 
@@ -45,7 +45,8 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 |---|---|
 | Config / models | `pydantic` v2, `pydantic-settings` |
 | LLM + embeddings client | `openai` SDK (pointed at NVIDIA NIM by default), `anthropic` SDK |
-| Vector stores | `qdrant-client`, `psycopg[binary]` + `pgvector` |
+| Vector store | `qdrant-client` |
+| Document registry | `psycopg[binary]` (Postgres) |
 | Sparse retrieval | `rank-bm25` |
 | Tokenization | `tiktoken` |
 | Numerics / stats | `numpy`, `scipy` (eval), `pandas` (eval) |
@@ -73,12 +74,12 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 |---|---|---|---|
 | Generation | NIM llama-3.3-70b | Anthropic Claude | `GEN_PROVIDER=anthropic` |
 | Embeddings | NIM bge-m3 (1024-d) | OpenAI 3-large (3072-d) | `EMBED_BASE_URL` + `EMBED_MODEL` + `EMBED_DIMENSION` |
-| Vector store | Qdrant | pgvector | `VECTOR_STORE=pgvector` |
+| Vector store | Qdrant | add a `VectorStore` impl + registry branch | `VECTOR_STORE` |
 | Reranker | BGE local | NIM rerank | `RERANKER=nim` |
 | Observability | off | Langfuse self-host | `LANGFUSE_ENABLED=true` |
 
 ### Infrastructure (`infra/docker-compose.yml`)
-- **App backends:** Qdrant (`:6333`), Postgres/pgvector (`:5432`), Redis 8 (`:6379` — arq queue + optional semantic cache)
+- **App backends:** Qdrant (`:6333`, vector store), Postgres (`:5432`, document registry), Redis 8 (`:6379` — arq queue + optional semantic cache)
 - **Langfuse v3 self-host stack (6 services):** web + worker + postgres + clickhouse + redis + minio
   (the `redis` here is the **same single Redis 8 container** listed under app backends above — one
   container, both roles: arq queue + semantic cache, and Langfuse's own queue/cache)
@@ -96,7 +97,7 @@ providers/       Concrete impls behind the interfaces:
   embedders/     openai_compatible (NIM/OpenAI)
   generators/    openai_compatible, anthropic
   rerankers/     local_cross_encoder, nim_rerank
-  vectorstores/  qdrant_store, pgvector_store
+  vectorstores/  qdrant_store
   sparse/        bm25
 retrieval/       hybrid (dense+sparse→RRF→rerank), acl (filter builder)
 generation/      grounded_generator (cited, structured output), prompts
@@ -151,7 +152,7 @@ Pass `--contextual` to `ingest.run` to enable per-chunk LLM prefixes (~1 LLM cal
 
 | Knob | Default | Notes |
 |---|---|---|
-| `VECTOR_STORE` | `qdrant` | or `pgvector` |
+| `VECTOR_STORE` | `qdrant` | Qdrant-only (`Literal["qdrant"]`); add a store via the `VectorStore` Protocol |
 | `EMBED_MODEL` / `EMBED_DIMENSION` | `baai/bge-m3` / `1024` | dimension drives store schema — never hardcoded |
 | `GEN_PROVIDER` / `GEN_MODEL` | `openai` / `meta/llama-3.3-70b-instruct` | `openai` = OpenAI-compatible (NIM) |
 | `RERANKER` | `local` | or `nim` |
@@ -174,7 +175,7 @@ Keys: component keys (`EMBED_API_KEY`, etc.) fall back to a shared `NVIDIA_API_K
 | Capability | Status | Notes |
 |---|---|---|
 | Swappable Protocol interfaces + registry | ✅ | The core abstraction; works |
-| Dense retrieval (Qdrant + pgvector) | ✅ | ACL filter applied server-side, pre-similarity |
+| Dense retrieval (Qdrant) | ✅ | ACL filter applied server-side, pre-similarity |
 | Sparse retrieval (BM25) | ✅ in eval / 🔴 dead in API | See audit — API builds it empty |
 | RRF fusion (k=60) | ✅ | |
 | Cross-encoder reranking (local + NIM) | ✅ | |
