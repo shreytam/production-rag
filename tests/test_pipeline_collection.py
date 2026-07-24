@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from core.config import get_settings
 from core.pipeline import RAGPipeline
-from core.types import ACLContext, Answer, Query, Usage
+from core.types import ACLContext, Query, Usage
 from generation.grounded_generator import GroundedGenerator
 
 

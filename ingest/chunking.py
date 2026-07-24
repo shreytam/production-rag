@@ -11,7 +11,6 @@ Chunk IDs are deterministic: f"{doc_id}::{ordinal}" (zero-padded to 6 digits).
 from __future__ import annotations
 
 import re
-from typing import Sequence
 
 import tiktoken
 

@@ -5,7 +5,6 @@ No model downloads. No network calls.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -76,7 +75,6 @@ class TestLocalCrossEncoderReranker:
 
     def test_real_model_never_loaded_when_scorer_provided(self) -> None:
         """CrossEncoder must not be imported/instantiated when scorer is injected."""
-        imported_cross_encoder = []
 
         def fake_scorer(pairs):
             return [1.0] * len(pairs)

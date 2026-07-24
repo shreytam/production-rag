@@ -1,7 +1,6 @@
 from __future__ import annotations
 import re
 from core.types import PIISpan
-from core.interfaces import PIIDetector
 
 _PATTERNS = [
     (
