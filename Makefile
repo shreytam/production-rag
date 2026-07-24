@@ -1,4 +1,4 @@
-.PHONY: install up up-app up-langfuse down ingest eval gate seed demo api test lint fmt clean
+.PHONY: install up up-app up-langfuse down ingest eval gate seed demo api test lint lint-workflows fmt clean
 
 DATASET ?= hotpotqa
 RUN     ?= local
@@ -43,6 +43,17 @@ test:               ## Run the test suite
 
 lint:               ## Lint
 	uv run ruff check .
+
+# An invalid workflow file cannot be caught by CI itself: GitHub refuses to
+# create ANY job for it, so no in-CI lint step ever runs. Check it locally.
+# Install with `brew install actionlint` (skipped, with a warning, if absent).
+lint-workflows:     ## Lint GitHub Actions workflows (needs actionlint)
+	@if command -v actionlint >/dev/null 2>&1; then \
+		actionlint; \
+	else \
+		echo "warning: actionlint not installed - skipping workflow lint."; \
+		echo "          install it with 'brew install actionlint'."; \
+	fi
 
 fmt:                ## Format
 	uv run ruff format .
