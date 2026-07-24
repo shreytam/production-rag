@@ -25,6 +25,10 @@ pii-ner = ["presidio-analyzer>=2.2", "spacy>=3.7"]
 rerank-local = ["sentence-transformers>=3.0"]
 app = ["fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37", "pyjwt[crypto]>=2.9", "unstructured>=0.15", "arq>=0.26"]
 obs = ["langfuse>=4"]
+# Optional: real redis-vl backend for the semantic cache (Redis 8). Lazily
+# imported (cache/_redisvl_backend.py only) so the offline suite and lint stay
+# dependency-free; install with `uv sync --extra cache` to enable it.
+cache = ["redisvl>=0.3"]
 # Optional: cross-check our native RAGAS-style metrics against the real library.
 # Not part of the core/CI path (the native metrics are the spine); install with
 # `uv sync --extra ragas` to enable eval/ragas_adapter.py.
@@ -35,6 +39,7 @@ all = [
     "sentence-transformers>=3.0",
     "fastapi>=0.112", "uvicorn>=0.30", "streamlit>=1.37", "pyjwt[crypto]>=2.9",
     "langfuse>=4",
+    "redisvl>=0.3",
     "pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6",
 ]
 

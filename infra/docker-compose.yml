@@ -215,7 +215,7 @@ services:
       start_period: 1s
 
   redis:
-    image: docker.io/redis:7
+    image: docker.io/redis:8-alpine
     restart: always
     command: >
       --requirepass dev-redis-change-me
