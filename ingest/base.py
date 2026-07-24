@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
 
-from core.types import Document, Chunk
+from core.types import Document
 
 
 class GoldenItem(BaseModel):

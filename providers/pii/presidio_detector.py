@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Any
 from core.types import PIISpan
-from core.interfaces import PIIDetector
 
 class PresidioPIIDetector:
     def __init__(self) -> None:

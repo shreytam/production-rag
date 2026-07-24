@@ -26,10 +26,13 @@ Usage
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.interfaces import Generator, Guardrail
 from core.types import Answer, GuardrailAction, GuardrailResult
+
+if TYPE_CHECKING:
+    from core.config import Settings
 
 
 class GuardrailRunner:
@@ -128,7 +131,7 @@ def default_runner(
     GroundednessGuardrail is omitted when *generator* is None (offline /
     testing scenarios where no LLM is available).
     """
-    from core.config import get_settings, Settings
+    from core.config import get_settings
     from guardrails.input_injection import InjectionGuardrail
     from guardrails.pii_guard import PIIGuardrail
     from guardrails.citation_enforcement import CitationGuardrail

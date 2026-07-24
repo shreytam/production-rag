@@ -39,7 +39,7 @@ def test_presidio_detector_lazy_check():
     detector = PresidioPIIDetector()
     # If libraries are available, test classification; otherwise expect ImportError if not installed.
     try:
-        import presidio_analyzer
+        import presidio_analyzer  # noqa: F401 — availability probe: raises ImportError if extra missing
         spans = detector.detect("My name is John Doe.")
         types = {s.type for s in spans}
         assert "PERSON" in types or len(types) >= 0

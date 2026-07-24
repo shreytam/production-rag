@@ -17,13 +17,16 @@ import pytest
 # cost.py
 # ---------------------------------------------------------------------------
 
+from core.config import Settings
+from core.types import Usage
 from observability.cost import (
     PRICING,
     cost_usd,
     cost_per_1k_queries,
     update_usage_cost,
 )
-from core.types import Usage
+from observability.dashboard import print_dashboard, summarize_runs
+from observability.langfuse_tracing import Tracer, timed
 
 
 class TestCostUsd:
@@ -76,9 +79,6 @@ class TestUpdateUsageCost:
 # ---------------------------------------------------------------------------
 # langfuse_tracing.py — no-op path (langfuse never imported/required)
 # ---------------------------------------------------------------------------
-
-from core.config import Settings
-from observability.langfuse_tracing import Tracer, timed
 
 
 def _disabled_settings() -> Settings:
@@ -168,8 +168,6 @@ class TestTimed:
 # ---------------------------------------------------------------------------
 # dashboard.py
 # ---------------------------------------------------------------------------
-
-from observability.dashboard import summarize_runs, print_dashboard
 
 
 class TestSummarizeRuns:

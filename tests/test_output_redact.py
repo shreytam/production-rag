@@ -1,9 +1,6 @@
-import pytest
 from core.types import Answer, ScoredChunk, Chunk, Citation, GuardrailAction
 from guardrails.runner import default_runner
-from core.pipeline import RAGPipeline
 from core.config import Settings
-from generation.grounded_generator import GroundedGenerator
 
 class FakeGenerator:
     def complete(self, messages, **kwargs):
@@ -33,14 +30,6 @@ def test_output_pii_guardrails_redacts_metadata_answer():
                 "citations": [{"marker": "[1]", "chunk_id": "c1"}]
             }
         }
-    )
-    
-    # Mock generation step and pipe run
-    pipeline = RAGPipeline(
-        retriever=None,
-        grounded=GroundedGenerator(FakeGenerator()),
-        settings=settings,
-        guardrails=runner
     )
     
     # Run output check

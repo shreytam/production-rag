@@ -1,4 +1,3 @@
-import pytest
 from core.config import Settings
 from observability.langfuse_tracing import Tracer
 

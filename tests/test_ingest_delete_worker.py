@@ -13,7 +13,8 @@ class DictBlobs:
     def __init__(self): self.d = {}
     def put(self, k, v): self.d[k] = v
     def get(self, k):
-        if k not in self.d: raise KeyError(k)
+        if k not in self.d:
+            raise KeyError(k)
         return self.d[k]
     def delete(self, k): self.d.pop(k, None)
 

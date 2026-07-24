@@ -1,4 +1,3 @@
-import pytest
 from ingest.pii import redact, PIIRedactor
 from core.types import PIISpan
 

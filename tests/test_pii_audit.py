@@ -1,6 +1,4 @@
 import json
-import pytest
-from pathlib import Path
 from ingest.audit import PIIAuditLog
 from core.types import PIISpan
 from core.config import Settings

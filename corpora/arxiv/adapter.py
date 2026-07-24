@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ingest.base import DatasetAdapter, GoldenItem, tenant_split_keeping_gold
+from ingest.base import DatasetAdapter, GoldenItem
 from core.types import Document
 
 if TYPE_CHECKING:

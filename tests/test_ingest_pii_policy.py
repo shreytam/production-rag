@@ -1,9 +1,7 @@
-import pytest
-from core.types import Document, Chunk
+from core.types import Document
 from core.config import Settings
 from ingest.contextual import ContextualPrefixer
 import re
-import shutil
 
 class FakeContextGenerator:
     def complete(self, messages, **kwargs):

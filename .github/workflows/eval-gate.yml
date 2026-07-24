@@ -83,6 +83,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
+      # Postgres is gated by its pg_isready healthcheck; Qdrant ships no curl for
+      # an in-container healthcheck, so poll /readyz from the runner host instead.
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:6333/readyz >/dev/null; then
+              echo "Qdrant ready after ${i} attempt(s)."
+              exit 0
+            fi
+            echo "Qdrant not ready yet (attempt ${i}/30); sleeping 2s..."
+            sleep 2
+          done
+          echo "Qdrant did not become ready within 60s." >&2
+          exit 1
+
       - name: Run live database isolation checks
         env:
           RAG_REQUIRE_LIVE_STORES: "1"
@@ -101,18 +116,17 @@ jobs:
     if: github.repository == 'ShreytamGoyal/production-rag' && secrets.NVIDIA_API_KEY != ''
 
     # Qdrant service container — CI uses VECTOR_STORE=qdrant (the default)
+    #
+    # No Docker `--health-cmd` here on purpose: the qdrant/qdrant image ships no
+    # `curl` (nor a shell we can rely on), so an in-container healthcheck can
+    # never pass and GitHub kills the "unhealthy" container before any step runs.
+    # Readiness is gated instead by the "Wait for Qdrant" step below, which polls
+    # from the runner host (where curl exists).
     services:
       qdrant:
         image: qdrant/qdrant:latest
         ports:
           - 6333:6333
-        # Qdrant has no readiness probe endpoint we can health-check cheaply;
-        # the ingest step will retry automatically via tenacity.
-        options: >-
-          --health-cmd "curl -sf http://localhost:6333/healthz || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
 
     env:
       # ── Provider: NIM via OpenAI-compatible SDK ─────────────────────────────
@@ -170,6 +184,21 @@ jobs:
       # No NVIDIA key needed for installation.
       - name: Install dependencies
         run: uv sync --all-extras
+
+      # Poll Qdrant readiness from the runner host (curl lives here, not in the
+      # qdrant image). /readyz flips to 200 once Qdrant can serve requests.
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:6333/readyz >/dev/null; then
+              echo "Qdrant ready after ${i} attempt(s)."
+              exit 0
+            fi
+            echo "Qdrant not ready yet (attempt ${i}/30); sleeping 2s..."
+            sleep 2
+          done
+          echo "Qdrant did not become ready within 60s." >&2
+          exit 1
 
       # ── Ingest ──────────────────────────────────────────────────────────────
       # REQUIRES NVIDIA_API_KEY (embedding calls to NIM).
