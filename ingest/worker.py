@@ -81,7 +81,11 @@ def run_ingest(deps: IngestDeps, document_id: str) -> None:
 
         chunks = []
         for doc in clean_docs:
-            chunks.extend(chunk_document(doc))
+            chunks.extend(chunk_document(
+                doc,
+                max_tokens=deps.settings.chunk_max_tokens,
+                overlap=deps.settings.chunk_overlap,
+            ))
         if deps.settings.pii_mode == "keep":
             for ch in chunks:
                 spans = detector.detect(ch.text)
@@ -138,7 +142,15 @@ def _build_deps(settings: Settings) -> IngestDeps:
 
 
 async def ingest_document(ctx, document_id: str) -> None:
-    """arq task entrypoint. Deps are built once per worker and cached on ctx."""
+    """arq task entrypoint. Deps are built once per worker and cached on ctx.
+
+    True only because `on_startup` seeds `ctx["deps"]` on the shared
+    `self.ctx` (arq copies ctx per-job otherwise, which would rebuild deps
+    every job). One consequence: `TenantSparseStore._cache` is now long-lived
+    rather than reloaded from disk per job — safe with a single worker
+    replica, but a lost-update bug if a second replica is ever added, since
+    `_save` rewrites the whole tenant list from the cached copy
+    (providers/sparse/tenant_store.py:42-47)."""
     deps = ctx.get("deps")
     if deps is None:
         from core.config import get_settings
@@ -155,6 +167,28 @@ async def delete_document(ctx, document_id: str) -> None:
         deps = _build_deps(get_settings())
         ctx["deps"] = deps
     run_delete(deps, document_id)
+
+
+async def on_startup(ctx) -> None:
+    """arq startup hook: runs once, before the worker starts polling for jobs.
+
+    The API ingest path (this worker) shares the same requirement as the
+    CLI/eval path (ingest/run.py:163): the vector store's collection must
+    exist before the first upsert. Doing it here — once per worker process —
+    instead of per document keeps ensure_collection()'s cost (two round trips
+    plus two create_payload_index calls) off the hot path.
+
+    Fail-closed: arq's Worker.main() awaits on_startup BEFORE entering the
+    poll loop, so an exception here propagates out of main() and the worker
+    process never starts accepting jobs, instead of silently upserting into a
+    collection that doesn't exist.
+    """
+    deps = ctx.get("deps")
+    if deps is None:
+        from core.config import get_settings
+        deps = _build_deps(get_settings())
+        ctx["deps"] = deps
+    deps.ingestor.ensure_collection()
 
 
 try:
@@ -177,6 +211,7 @@ class WorkerSettings:
     """
 
     functions = [ingest_document, delete_document]
+    on_startup = on_startup
 
     if _RedisSettings is not None:
         redis_settings = _RedisSettings.from_dsn(get_settings().redis_url)

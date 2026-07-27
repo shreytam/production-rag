@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     tenant_sparse_dir: str = ".cache/sparse_tenants"
     context_tokenizer: str = "auto"
     context_token_safety_margin: float = 0.0
+    chunk_max_tokens: int = 256
     chunk_overlap: int = 200
 
     # --- Guardrails ---
@@ -247,6 +248,19 @@ class Settings(BaseSettings):
         if self.pii_audit_value_hash and not self.pii_audit_hash_salt:
             raise ValueError(
                 "pii_audit_hash_salt must be set when pii_audit_value_hash is True to prevent hash brute-forcing."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_chunking(self) -> "Settings":
+        """overlap >= max_tokens would silently be clamped by the chunker
+        (`overlap = min(overlap, max_tokens - 1)`, ingest/chunking.py) rather
+        than honoured — the configured value would not be the value actually
+        in force. Reject it at boot instead of letting config lie."""
+        if self.chunk_overlap >= self.chunk_max_tokens:
+            raise ValueError(
+                f"chunk_overlap ({self.chunk_overlap}) must be less than "
+                f"chunk_max_tokens ({self.chunk_max_tokens})"
             )
         return self
 

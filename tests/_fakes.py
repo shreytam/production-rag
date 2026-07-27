@@ -80,6 +80,30 @@ class InMemoryVectorStore:
                 c.title = payload["title"]
 
 
+class StrictInMemoryVectorStore(InMemoryVectorStore):
+    """Faithful fake: `upsert` raises unless `ensure_collection` was already
+    called, the way a real Qdrant server rejects writes to a missing
+    collection. `InMemoryVectorStore` above stubs `ensure_collection` as a
+    no-op and accepts `upsert` unconditionally, so it can never catch a
+    caller that forgets to create the collection first — use this fake for
+    tests that need to prove that regression is caught."""
+
+    def __init__(self):
+        super().__init__()
+        self.collection_ensured = False
+
+    def ensure_collection(self, dimension):
+        self.collection_ensured = True
+
+    def upsert(self, chunks):
+        if not self.collection_ensured:
+            raise RuntimeError(
+                "upsert on a collection that does not exist — call "
+                "ensure_collection() first"
+            )
+        super().upsert(chunks)
+
+
 class FakeReranker:
     def rerank(self, query, chunks, top_n):
         qtok = set(query.lower().split())

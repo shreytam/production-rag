@@ -112,7 +112,7 @@ jobs:
           PG_DSN: "postgresql://rag:rag@localhost:5432/rag"
           QDRANT_URL: "http://localhost:6333"
         run: |
-          uv run pytest tests/test_stores_acl.py tests/test_multitenant_isolation.py -v
+          uv run pytest tests/test_stores_acl.py tests/test_multitenant_isolation.py tests/test_ingest_worker.py -v
 
   # ---------------------------------------------------------------------------
   # Job 3: preflight — is the eval gate runnable on this event at all?
