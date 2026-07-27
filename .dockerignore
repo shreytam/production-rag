@@ -8,6 +8,10 @@
 .idea
 .vscode
 .DS_Store
+.superpowers
+skills-lock.json
+AGENTS.md
+CLAUDE.md
 
 # Python envs / caches
 .venv
@@ -34,7 +38,12 @@ eval/runs
 .env.local
 infra/.env
 
-# Docs and tests (not needed at runtime; keep image small)
+# Docs and tests (not needed at runtime; keep image small).
+#
+# Excluding README.md is only safe because the Dockerfile builds with
+# `uv sync --no-install-project`. Installing the project runs hatchling, which
+# reads `readme = "README.md"` from pyproject.toml and fails the build with
+# `OSError: Readme file does not exist: README.md`.
 docs
 tests
 README.md

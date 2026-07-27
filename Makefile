@@ -1,4 +1,4 @@
-.PHONY: install up up-app up-langfuse down ingest eval gate seed demo api test lint lint-workflows fmt clean
+.PHONY: install up up-app up-langfuse down ingest eval gate seed api console test lint lint-workflows fmt clean
 
 DATASET ?= hotpotqa
 RUN     ?= local
@@ -11,11 +11,11 @@ install:            ## Create venv and install all extras
 up:                 ## Start everything (app + full Langfuse v3 stack, 8 containers)
 	$(COMPOSE) up -d
 
-up-app:             ## Start app backends only (Qdrant + Postgres/pgvector)
+up-app:             ## Start app backends only (Qdrant + Postgres 17)
 	$(COMPOSE) up -d qdrant postgres
 
-up-langfuse:        ## Start the Langfuse v3 stack (web+worker+db+clickhouse+redis+minio)
-	$(COMPOSE) up -d langfuse-web langfuse-worker langfuse-db clickhouse redis minio
+up-langfuse:        ## Start the Langfuse v3 stack (web+worker+clickhouse+redis+minio)
+	$(COMPOSE) up -d langfuse-web langfuse-worker postgres clickhouse redis minio
 
 down:               ## Stop backends
 	$(COMPOSE) down

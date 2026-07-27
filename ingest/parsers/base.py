@@ -27,8 +27,12 @@ class ParserRegistry:
     def resolve(self, content_type: str) -> DocumentParser:
         if content_type not in self._allowed:
             raise ParserError(f"unsupported content_type: {content_type}")
-        from ingest.parsers.plain_text import PlainTextParser
         if content_type in ("text/plain", "text/markdown"):
+            from ingest.parsers.plain_text import PlainTextParser
             return PlainTextParser()
+        if content_type == "application/pdf":
+            # pypdf, not unstructured: see ingest/parsers/pdf.py for why.
+            from ingest.parsers.pdf import PdfParser
+            return PdfParser()
         from ingest.parsers.unstructured_parser import UnstructuredParser
         return UnstructuredParser()

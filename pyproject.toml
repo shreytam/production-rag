@@ -26,7 +26,24 @@ rerank-local = ["sentence-transformers>=3.0"]
 # python-multipart is required by FastAPI for File()/Form() — i.e. the /documents
 # upload endpoint. It was previously satisfied only as a transitive dep of
 # streamlit; declare it directly so the upload path cannot break silently.
-app = ["fastapi>=0.112", "uvicorn>=0.30", "pyjwt[crypto]>=2.9", "unstructured>=0.15", "arq>=0.26", "python-multipart>=0.0.9"]
+#
+# `unstructured` gates each format behind its own optional dependencies and
+# raises ImportError at parse time when they are missing. Everything advertised
+# in Settings.ingest_allowed_types must therefore be installed here, or the API
+# accepts uploads it can never parse (tests/test_document_parser.py asserts
+# every advertised type actually parses):
+#   .docx            -> python-docx
+#   application/pdf  -> pypdf, via our own ingest/parsers/pdf.py. NOT via
+#                       unstructured: its PDF path imports unstructured_inference
+#                       (onnxruntime/opencv/torch, ~2.5 GB) at module scope even
+#                       for text-only extraction, and fetches ONNX layout weights
+#                       over the network on first parse.
+# text/plain, text/markdown and text/html need no extra packages.
+app = [
+    "fastapi>=0.112", "uvicorn>=0.30", "pyjwt[crypto]>=2.9", "arq>=0.26",
+    "python-multipart>=0.0.9",
+    "unstructured>=0.15", "pypdf>=4.2", "python-docx>=1.1",
+]
 obs = ["langfuse>=4"]
 # Optional: real redis-vl backend for the semantic cache (Redis 8). Lazily
 # imported (cache/_redisvl_backend.py only) so the offline suite and lint stay
@@ -40,7 +57,9 @@ dev = ["pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6"]
 all = [
     "datasets>=2.20", "scipy>=1.13", "pandas>=2.2",
     "sentence-transformers>=3.0",
-    "fastapi>=0.112", "uvicorn>=0.30", "pyjwt[crypto]>=2.9", "python-multipart>=0.0.9",
+    "fastapi>=0.112", "uvicorn>=0.30", "pyjwt[crypto]>=2.9", "arq>=0.26",
+    "python-multipart>=0.0.9",
+    "unstructured>=0.15", "pypdf>=4.2", "python-docx>=1.1",
     "langfuse>=4",
     "redisvl>=0.3",
     "pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6",

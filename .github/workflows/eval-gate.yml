@@ -2,7 +2,7 @@
 #
 # Five jobs:
 #   lint              — offline: ruff + pytest (no secrets, no services required)
-#   acl-isolation     — online: pgvector/qdrant service containers for tenant security tests
+#   acl-isolation     — online: postgres/qdrant service containers for tenant security tests
 #   preflight         — probes whether NVIDIA_API_KEY exists, so `eval` can gate on it
 #   eval              — online: ingest → run experiment → gate against Langfuse baseline run
 #   eval-gate-status  — aggregates the above into the single required status check
@@ -52,7 +52,7 @@ jobs:
         run: uv run pytest -q
 
   # ---------------------------------------------------------------------------
-  # Job 2: acl-isolation — pgvector and qdrant security test suite
+  # Job 2: acl-isolation — postgres and qdrant security test suite
   # ---------------------------------------------------------------------------
   acl-isolation:
     name: Live Database ACL Isolation Tests
@@ -62,8 +62,11 @@ jobs:
         image: qdrant/qdrant:latest
         ports:
           - 6333:6333
+      # Stock postgres:17 — the app uses Postgres only for the document
+      # registry. Qdrant is the sole vector store, so the pgvector extension
+      # (and the pgvector/pgvector:pg16 image that carried it) is not needed.
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:17
         env:
           POSTGRES_DB: rag
           POSTGRES_USER: rag

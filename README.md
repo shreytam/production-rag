@@ -183,7 +183,8 @@ eval: golden dataset → experiment → Langfuse scores → gate (baseline vs ne
 │
 ├── tests/                # Offline test suite (fakes, no secrets, no services)
 ├── infra/
-│   ├── docker-compose.yml  # Qdrant + Postgres + Redis 8 + Langfuse v3 stack
+│   ├── docker-compose.yml  # Qdrant + Postgres 17 + Redis 8 + Langfuse v3 stack
+│   ├── postgres-init/      # creates the `rag` and `langfuse` databases on first boot
 │   └── .env.example
 ├── .github/workflows/
 │   └── eval-gate.yml     # CI: lint + offline tests + ACL-isolation + eval gate
@@ -269,6 +270,11 @@ cp infra/.env.example .env
 make up                             # Qdrant + Postgres + Redis + Langfuse stack
 # or just the app backends:
 make up-app                         # Qdrant + Postgres
+
+# One postgres:17 server holds two databases with separate owners:
+#   rag       -> the document registry   (PG_DSN)
+#   langfuse  -> the Langfuse stack      (DATABASE_URL, set in compose)
+# They are created on first boot by infra/postgres-init/.
 
 # 4a. Product path — run the API and push documents
 make api                            # FastAPI on :8000 (uvicorn --reload)
@@ -447,7 +453,7 @@ Other operational dimensions scale similarly:
 | `make install` | `uv sync --all-extras` — create venv and install everything |
 | `make up` | Start Qdrant + Postgres + Redis + the full Langfuse v3 stack |
 | `make up-app` | Start app backends only (Qdrant + Postgres) |
-| `make up-langfuse` | Start the Langfuse v3 stack (web + worker + db + clickhouse + redis + minio) |
+| `make up-langfuse` | Start the Langfuse v3 stack (web + worker + postgres + clickhouse + redis + minio) |
 | `make down` | Stop all backend services |
 | `make ingest DATASET=X` | Ingest corpus X (hotpotqa / arxiv / financebench) |
 | `make seed DATASET=X ITEMS=…` | Upload golden items to a Langfuse dataset |
