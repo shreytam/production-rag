@@ -28,6 +28,13 @@ class IncrementalIngestor:
         self._sparse = sparse
         self._manifest = manifest_store
 
+    def ensure_collection(self) -> None:
+        """Create the vector store's collection if it doesn't exist yet, sized
+        to the embedder's dimension — mirrors the CLI path (ingest/run.py).
+        Idempotent but not free (get_collections + create_collection, plus two
+        create_payload_index calls): call once per process, not per document."""
+        self._store.ensure_collection(self._embedder.dimension)
+
     def ingest_document(self, tenant_id: str, doc_id: str,
                         chunks: list[Chunk], acl: ACLContext) -> int:
         old = self._manifest.load(tenant_id, doc_id)

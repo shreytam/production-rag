@@ -157,6 +157,28 @@ async def delete_document(ctx, document_id: str) -> None:
     run_delete(deps, document_id)
 
 
+async def on_startup(ctx) -> None:
+    """arq startup hook: runs once, before the worker starts polling for jobs.
+
+    The API ingest path (this worker) shares the same requirement as the
+    CLI/eval path (ingest/run.py:163): the vector store's collection must
+    exist before the first upsert. Doing it here — once per worker process —
+    instead of per document keeps ensure_collection()'s cost (two round trips
+    plus two create_payload_index calls) off the hot path.
+
+    Fail-closed: arq's Worker.main() awaits on_startup BEFORE entering the
+    poll loop, so an exception here propagates out of main() and the worker
+    process never starts accepting jobs, instead of silently upserting into a
+    collection that doesn't exist.
+    """
+    deps = ctx.get("deps")
+    if deps is None:
+        from core.config import get_settings
+        deps = _build_deps(get_settings())
+        ctx["deps"] = deps
+    deps.ingestor.ensure_collection()
+
+
 try:
     from arq.connections import RedisSettings as _RedisSettings
 except ModuleNotFoundError:  # arq ships in the 'app' extra; the base test env omits it
@@ -177,6 +199,7 @@ class WorkerSettings:
     """
 
     functions = [ingest_document, delete_document]
+    on_startup = on_startup
 
     if _RedisSettings is not None:
         redis_settings = _RedisSettings.from_dsn(get_settings().redis_url)
