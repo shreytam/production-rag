@@ -253,9 +253,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_chunking(self) -> "Settings":
-        """overlap >= max_tokens leaves the chunker no forward progress per
-        step (see ingest/chunking.py's `step = max_tokens - overlap`) — fail
-        fast at boot rather than chunk pathologically at runtime."""
+        """overlap >= max_tokens would silently be clamped by the chunker
+        (`overlap = min(overlap, max_tokens - 1)`, ingest/chunking.py) rather
+        than honoured — the configured value would not be the value actually
+        in force. Reject it at boot instead of letting config lie."""
         if self.chunk_overlap >= self.chunk_max_tokens:
             raise ValueError(
                 f"chunk_overlap ({self.chunk_overlap}) must be less than "

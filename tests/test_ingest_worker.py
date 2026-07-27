@@ -92,6 +92,22 @@ def test_worker_startup_ensures_collection_then_first_upload_reaches_ready(tmp_p
     assert rec.chunk_count >= 1
 
 
+def test_worker_settings_wires_on_startup():
+    """Regression guard: `WorkerSettings.on_startup = on_startup` (ingest/worker.py)
+    is the ENTIRE production wiring for the P0 collection-creation fix — arq's
+    Worker.main() awaits it before entering the poll loop. Every test above calls
+    on_startup(...) directly, so deleting that one class-body line reintroduces
+    the P0 while the rest of this file stays green. Assert what arq itself
+    resolves (get_kwargs is arq's own attribute-resolution path — see
+    tests/test_documents_api.py's redis_settings wiring test, written for the
+    same class of bug in PR #20), not what the class body merely states."""
+    from arq.worker import get_kwargs
+
+    from ingest.worker import WorkerSettings, on_startup
+
+    assert get_kwargs(WorkerSettings)["on_startup"] is on_startup
+
+
 # ---------------------------------------------------------------------------
 # Live Qdrant: the API/worker path against a REAL, empty collection. Skipped
 # (or failed, under RAG_REQUIRE_LIVE_STORES) when Qdrant is unreachable — same

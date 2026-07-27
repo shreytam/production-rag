@@ -142,7 +142,15 @@ def _build_deps(settings: Settings) -> IngestDeps:
 
 
 async def ingest_document(ctx, document_id: str) -> None:
-    """arq task entrypoint. Deps are built once per worker and cached on ctx."""
+    """arq task entrypoint. Deps are built once per worker and cached on ctx.
+
+    True only because `on_startup` seeds `ctx["deps"]` on the shared
+    `self.ctx` (arq copies ctx per-job otherwise, which would rebuild deps
+    every job). One consequence: `TenantSparseStore._cache` is now long-lived
+    rather than reloaded from disk per job — safe with a single worker
+    replica, but a lost-update bug if a second replica is ever added, since
+    `_save` rewrites the whole tenant list from the cached copy
+    (providers/sparse/tenant_store.py:42-47)."""
     deps = ctx.get("deps")
     if deps is None:
         from core.config import get_settings
