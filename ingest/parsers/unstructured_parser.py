@@ -14,7 +14,13 @@ class UnstructuredParser:
         except ImportError as e:  # pragma: no cover
             raise ParserError("unstructured not installed") from e
         import io
-        elements = partition(file=io.BytesIO(raw), metadata_filename=filename)
+        # Pass content_type explicitly. Without it `partition` sniffs the type
+        # from the filename extension (libmagic is not installed), so an upload
+        # named "report" with no extension resolves to FileType.UNK and raises
+        # even though the caller already told us exactly what it is.
+        elements = partition(
+            file=io.BytesIO(raw), metadata_filename=filename, content_type=content_type,
+        )
         text = "\n\n".join(str(el) for el in elements if str(el).strip())
         if not text:
             raise ParserError(f"no extractable text in {filename}")
