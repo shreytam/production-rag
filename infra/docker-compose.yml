@@ -1,8 +1,12 @@
 # Local dev backends for Production RAG.
 #
 #   App stack:   qdrant (vector store) + postgres (document registry)
-#   Langfuse v3: langfuse-web + langfuse-worker + langfuse-db + clickhouse
-#                + redis + minio   (the single-container v2 image is gone)
+#   Langfuse v3: langfuse-web + langfuse-worker + clickhouse + redis + minio
+#                (the single-container v2 image is gone)
+#
+# ONE postgres:17 service backs both, in separate databases with separate
+# owners and separate env vars: `rag`/PG_DSN for the app, `langfuse`/DATABASE_URL
+# for Langfuse. See infra/postgres-init/10-create-databases.sql.
 #
 # Usage:
 #   docker compose -f infra/docker-compose.yml up -d                 # everything
@@ -26,18 +30,37 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
 
+  # ONE Postgres 17 server, two databases, two owners (see
+  # infra/postgres-init/10-create-databases.sql):
+  #   rag       — the app's document registry, addressed via PG_DSN
+  #   langfuse  — the Langfuse v3 stack,       addressed via DATABASE_URL
+  #
+  # Previously this was pgvector/pgvector:pg16 alongside a separate postgres:17
+  # for Langfuse. The pgvector extension is dead weight now that Qdrant is the
+  # sole vector store (there is no pgvector code left in the tree), so the two
+  # servers collapse into this one.
+  #
+  # The volume is deliberately named pgdata17, not pgdata: a Postgres 17 server
+  # refuses to start on a data directory initialised by 16, so reusing the old
+  # name would hard-fail instead of initialising cleanly. The old `pgdata` and
+  # `langfuse_pgdata` volumes are left on disk untouched; remove them by hand
+  # once you are happy (`docker volume rm <project>_pgdata <project>_langfuse_pgdata`).
   postgres:
-    image: pgvector/pgvector:pg16
+    image: docker.io/postgres:17
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: rag
-      POSTGRES_PASSWORD: rag
-      POSTGRES_DB: rag
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev-postgres-change-me
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata17:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rag"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -117,7 +140,7 @@ services:
     image: docker.io/langfuse/langfuse-worker:3
     restart: always
     depends_on: &langfuse-depends-on
-      langfuse-db:
+      postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -128,8 +151,9 @@ services:
     ports:
       - "127.0.0.1:3030:3030"
     environment: &langfuse-worker-env
-      # Postgres (dedicated to Langfuse — separate from the app's Postgres DB)
-      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      # Postgres: the shared pg17 server, but Langfuse's OWN database and role —
+      # separate from the app's `rag` database, which is reached via PG_DSN.
+      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
       SALT: dev-salt-change-me
       # 64 hex chars (dev only). Prod: `openssl rand -hex 32`.
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
@@ -185,24 +209,8 @@ services:
       LANGFUSE_INIT_USER_NAME: Dev
       LANGFUSE_INIT_USER_PASSWORD: dev-password
 
-  langfuse-db:
-    image: docker.io/postgres:17
-    restart: always
-    environment:
-      POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: langfuse
-      POSTGRES_DB: langfuse
-      TZ: UTC
-      PGTZ: UTC
-    ports:
-      - "127.0.0.1:5433:5432"   # 5432 is taken by the app's postgres (document registry)
-    volumes:
-      - langfuse_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse"]
-      interval: 3s
-      timeout: 3s
-      retries: 10
+  # NOTE: there is no separate `langfuse-db` service any more. Langfuse uses the
+  # `langfuse` database on the shared `postgres` service defined at the top.
 
   clickhouse:
     image: docker.io/clickhouse/clickhouse-server
@@ -264,10 +272,9 @@ services:
 
 volumes:
   qdrant_storage:
-  pgdata:
+  pgdata17:           # pg17 data dir for BOTH the `rag` and `langfuse` databases
   ingest_worker_venv:
   app_shared_cache:   # shared .cache (blobs/sparse index/manifest) between `api` and `ingest-worker`
-  langfuse_pgdata:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
