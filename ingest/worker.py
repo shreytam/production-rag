@@ -81,7 +81,11 @@ def run_ingest(deps: IngestDeps, document_id: str) -> None:
 
         chunks = []
         for doc in clean_docs:
-            chunks.extend(chunk_document(doc))
+            chunks.extend(chunk_document(
+                doc,
+                max_tokens=deps.settings.chunk_max_tokens,
+                overlap=deps.settings.chunk_overlap,
+            ))
         if deps.settings.pii_mode == "keep":
             for ch in chunks:
                 spans = detector.detect(ch.text)

@@ -64,6 +64,22 @@ def _apply_pii_ingest_policy(
         return docs, []
 
 
+def _chunk_documents(docs: list[Document], settings: Settings) -> list[Chunk]:
+    """Chunk every document using the token budget from Settings, so a config
+    change (chunk_max_tokens / chunk_overlap) actually changes the chunks this
+    CLI/eval path produces, same as the API/worker path."""
+    from ingest.chunking import chunk_document
+
+    chunks: list[Chunk] = []
+    for doc in docs:
+        chunks.extend(chunk_document(
+            doc,
+            max_tokens=settings.chunk_max_tokens,
+            overlap=settings.chunk_overlap,
+        ))
+    return chunks
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Ingest a corpus into the RAG stack.")
     parser.add_argument(
@@ -109,11 +125,7 @@ def main(argv: list[str] | None = None) -> None:
         raise e
 
     # --- Chunk redacted or raw documents ---
-    from ingest.chunking import chunk_document
-
-    all_chunks = []
-    for doc in clean_docs:
-        all_chunks.extend(chunk_document(doc))
+    all_chunks = _chunk_documents(clean_docs, settings)
     print(f"[ingest] produced {len(all_chunks)} chunks")
 
     # In keep mode, tag PII on generated chunks and write audit log
