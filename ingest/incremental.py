@@ -73,6 +73,12 @@ class IncrementalIngestor:
             if to_embed:
                 from core.config import get_settings
 
+                # First-run bootstrap: create the collection if absent
+                # (idempotent). Dimension must match the embedder.
+                ensure = getattr(self._store, "ensure_collection", None)
+                if ensure is not None:
+                    ensure(get_settings().embed_dimension)
+
                 with tracer.span(
                     "ingest.embed_documents", as_type="embedding",
                     model=get_settings().embed_model, n_chunks=len(to_embed),

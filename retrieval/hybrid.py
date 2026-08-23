@@ -9,10 +9,14 @@ afterward.
 
 from __future__ import annotations
 
+import logging
+
 from core.config import get_settings
 from core.interfaces import Embedder, Reranker, SparseRetriever, VectorStore
 from core.rrf import reciprocal_rank_fusion
 from core.types import Query, ScoredChunk
+
+logger = logging.getLogger(__name__)
 
 
 _TRACER = None
@@ -84,4 +88,17 @@ class HybridRetriever:
         if not fused:
             return []
         window = fused[: self.fuse_window]
-        return self.reranker.rerank(query.text, window, query.rerank_top_n)
+        try:
+            reranked = self.reranker.rerank(query.text, window, query.rerank_top_n)
+            if not reranked and window:
+                # Malformed success response (e.g. empty rankings list):
+                # degrade to fused order rather than answering from zero context.
+                raise RuntimeError("reranker returned no rankings for non-empty input")
+            return reranked
+        except Exception:
+            # Fail-soft (audit HG-2): a reranker outage must degrade ranking,
+            # never kill the query or silently discard retrieval results.
+            logger.warning(
+                "reranker failed; falling back to fused RRF order", exc_info=True
+            )
+            return window[: query.rerank_top_n]
