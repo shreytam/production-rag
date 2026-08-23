@@ -1,7 +1,7 @@
 [project]
 name = "production-rag"
 version = "0.1.0"
-description = "Production-grade RAG: hybrid retrieval + reranking + contextual retrieval, ACL isolation, guardrails, and an eval harness wired into CI."
+description = "Production-grade RAG: hybrid retrieval + reranking + contextual retrieval, ACL isolation, guardrails, and async PDF-document ingestion."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -20,7 +20,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-eval = ["datasets>=2.20", "scipy>=1.13", "pandas>=2.2"]
 pii-ner = ["presidio-analyzer>=2.2", "spacy>=3.7"]
 rerank-local = ["sentence-transformers>=3.0"]
 # python-multipart is required by FastAPI for File()/Form() — i.e. the /documents
@@ -32,13 +31,8 @@ obs = ["langfuse>=4"]
 # imported (cache/_redisvl_backend.py only) so the offline suite and lint stay
 # dependency-free; install with `uv sync --extra cache` to enable it.
 cache = ["redisvl>=0.3"]
-# Optional: cross-check our native RAGAS-style metrics against the real library.
-# Not part of the core/CI path (the native metrics are the spine); install with
-# `uv sync --extra ragas` to enable eval/ragas_adapter.py.
-ragas = ["ragas>=0.4", "langchain-openai>=0.2"]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.23", "ruff>=0.6"]
 all = [
-    "datasets>=2.20", "scipy>=1.13", "pandas>=2.2",
     "sentence-transformers>=3.0",
     "fastapi>=0.112", "uvicorn>=0.30", "pyjwt[crypto]>=2.9", "python-multipart>=0.0.9",
     "langfuse>=4",
@@ -51,7 +45,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["core", "providers", "ingest", "corpora", "retrieval", "generation", "guardrails", "eval", "observability", "app"]
+packages = ["core", "providers", "ingest", "retrieval", "generation", "guardrails", "observability", "app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

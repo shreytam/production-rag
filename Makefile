@@ -1,8 +1,5 @@
-.PHONY: install up up-app up-langfuse down ingest eval gate seed demo api test lint fmt clean
+.PHONY: install up up-app up-langfuse down ingest api console test lint fmt clean
 
-DATASET ?= hotpotqa
-RUN     ?= local
-ITEMS   ?= data/eval/$(DATASET).json
 COMPOSE := docker compose -f infra/docker-compose.yml
 
 install:            ## Create venv and install all extras
@@ -20,17 +17,8 @@ up-langfuse:        ## Start the Langfuse v3 stack (web+worker+db+clickhouse+red
 down:               ## Stop backends
 	$(COMPOSE) down
 
-ingest:             ## Ingest a dataset:  make ingest DATASET=hotpotqa
-	uv run python -m ingest.run --dataset $(DATASET)
-
-eval:               ## Run eval experiment:  make eval DATASET=hotpotqa RUN=myrun
-	uv run python -m eval.experiment --dataset $(DATASET) --version full --run-name $(RUN)
-
-gate:               ## Gate a run vs baseline:  make gate DATASET=hotpotqa RUN=myrun
-	uv run python -m eval.gate --dataset $(DATASET) --new-run $(RUN) --baseline-run baseline
-
-seed:               ## Seed a dataset:  make seed DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json
-	uv run python -m eval.dataset_cli seed --dataset $(DATASET) --items $(ITEMS)
+ingest:             ## Bulk-ingest PDF documents:  make ingest INPUT=path/to/pdfs
+	uv run python -m ingest.run --input $(INPUT)
 
 api:                ## Launch the FastAPI service
 	uv run uvicorn app.api:app --reload

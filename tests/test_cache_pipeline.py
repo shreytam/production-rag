@@ -151,23 +151,3 @@ def test_build_enable_cache_none_or_true_wires_cache_when_settings_enabled(monke
     p_true = pipeline_mod.build(version="baseline", settings=s, enable_cache=True)
     assert p_true.answer_cache is not None
     assert p_true.retrieval_cache is not None
-
-
-# --- Nice-to-have: the two eval entry points must literally pass
-# `enable_cache=False` at their `build(...)` call sites, by source inspection
-# (no need to run their full `main()`, which has heavier side effects).
-
-def test_eval_experiment_main_forces_cache_off():
-    import inspect
-
-    import eval.experiment as experiment_mod
-    src = inspect.getsource(experiment_mod.main)
-    assert "enable_cache=False" in src
-
-
-def test_eval_ragas_adapter_main_forces_cache_off():
-    import inspect
-
-    import eval.ragas_adapter as ragas_mod
-    src = inspect.getsource(ragas_mod.main)
-    assert "enable_cache=False" in src

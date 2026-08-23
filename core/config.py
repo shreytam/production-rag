@@ -66,7 +66,9 @@ class Settings(BaseSettings):
     context_api_key: str = ""
     anthropic_context_model: str = "claude-haiku-4-5-20251001"
 
-    # --- LLM judge / RAGAS backing model ---
+    # --- LLM judge ---
+    # Registry still exposes a judge model role (used by scoring utilities); kept
+    # configurable even though the standalone eval harness was removed.
     judge_provider: Literal["openai", "anthropic"] = "openai"
     judge_base_url: str = NIM_BASE_URL
     judge_model: str = "meta/llama-3.3-70b-instruct"
@@ -92,7 +94,6 @@ class Settings(BaseSettings):
     retrieve_top_k: int = 20
     rerank_top_n: int = 8
     context_token_budget: int = 4000
-    active_corpus: str = ""
     # NOTE: build(version="full") now always uses the per-tenant TenantSparseStore,
     # so this flag currently has no effect on the pipeline (the fail-closed gate that
     # used to raise HybridIndexError on an empty/missing sparse index was removed).
@@ -105,9 +106,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
 
     # --- Guardrails ---
-    # On for the production query path (api/demo). The eval path forces this OFF
-    # explicitly (CitationGuardrail/SchemaGuardrail would BLOCK normal answers and
-    # confound metrics; groundedness adds an LLM call per item).
+    # On for the production query path (api/demo).
     guardrails_enabled: bool = True
 
     # SP2 guardrail-correctness knobs
@@ -142,23 +141,10 @@ class Settings(BaseSettings):
     pii_scan_output: bool = True
     langfuse_sample_rate: float = 1.0
 
-    # --- Ingest sizing (keep corpora small to respect NIM rate limits) ---
+    # --- Ingest sizing (keep batches modest to respect NIM rate limits) ---
     max_chunks_per_corpus: int = 2000
     contextual_cache_dir: str = ".cache/contextual"
     manifest_dir: str = ".cache/manifest"
-
-    # --- Eval Gate & Stats ---
-    eval_tolerance: float = 0.03
-    eval_gate_mode: Literal["bootstrap", "threshold", "both"] = "bootstrap"
-    eval_baseline_run: str = "baseline"
-    eval_gate_thresholds: dict[str, float] = Field(default_factory=dict)
-    eval_fast_n: int = 15
-    eval_fast_seed: int = 0
-    eval_bootstrap_resamples: int = 1000
-
-    # --- LLM Judge Voting ---
-    judge_votes: int = 3
-    judge_seed: int = 0
 
     # --- Live Store CI Gating ---
     require_live_stores: bool = Field(

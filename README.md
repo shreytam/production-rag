@@ -1,11 +1,10 @@
-# Production RAG — Async Ingestion · Hybrid Retrieval · Semantic Cache · Eval-Gated CI
+# Production RAG — Async PDF Ingestion · Hybrid Retrieval · Semantic Cache
 
 A production-grade Retrieval-Augmented Generation service built behind clean,
 swappable interfaces (no framework lock-in in the core). It pairs a real
-retrieval pipeline — async document ingestion, hybrid search, reranking,
-multi-tenant isolation — with the thing most demos skip: a rigorous
-**Langfuse-native eval harness** that produces numbers, bootstrap confidence
-intervals, and a **CI gate** that blocks quality regressions.
+retrieval pipeline — async **PDF document** ingestion, hybrid search, reranking,
+multi-tenant isolation — with production discipline: JWT auth, server-side ACL
+isolation, guardrails, and opt-in observability.
 
 ## Overview
 
@@ -30,11 +29,13 @@ adds the engineering discipline required before production:
 - **Two-tier semantic cache** (Redis 8 / redis-vl): answer-level and
   retrieval-level, tenant/collection-isolated, with targeted eviction on
   document change and a TTL backstop. Opt-in, off by default.
-- **RAGAS-style metrics implemented natively** — no `ragas` dependency in the
-  spine, fully injectable for offline testing.
-- **Langfuse-native eval**: experiments register as dataset runs, per-item
-  scores push back to Langfuse, and a paired-bootstrap / threshold **gate**
-  reads those scores back to fail CI on regression.
+- **Native metrics library** (`generation/metrics.py`) — e.g. faithfulness,
+  implemented natively with no external dependency, fully injectable for
+  offline testing.
+- **PDF-only documents**: tenants upload PDFs via `POST /documents` (multipart)
+  or bulk-ingest a directory with `python -m ingest.run --input`. The benchmark
+  corpus adapters and the Langfuse-native eval harness were removed in the
+  pivot to PDF documents.
 
 ---
 
@@ -71,17 +72,6 @@ flowchart TD
         N --> ANS
     end
 
-    subgraph Eval["Langfuse-native eval"]
-        DS[Golden Dataset\neval.dataset_cli seed] --> EXP[eval.experiment\n--run-name]
-        EXP --> RM[Retrieval Metrics\nRecall@5 · nDCG@5 · MRR]
-        EXP --> GM[Generation Metrics\nFaithfulness · Answer-Rel · Ctx-Precision · Ctx-Recall]
-        EXP --> JU[LLM Judge\nholistic score]
-        RM & GM & JU --> LF[(Langfuse\ndataset runs + scores)]
-        LF --> GATE{eval.gate\nbaseline vs new}
-        GATE -->|regression| FAIL[CI FAIL]
-        GATE -->|within tolerance| PASS[CI PASS]
-    end
-
     N --> OBS[Langfuse\ntraces · cost · latency]
 ```
 
@@ -98,8 +88,6 @@ POST /query → JWT → ACL context → semantic cache?
                 → generate (grounded, cited, structured output) → Answer + citations
                                                  │
          traces + cost + latency metrics → Langfuse dashboard
-                                                 │
-eval: golden dataset → experiment → Langfuse scores → gate (baseline vs new) → CI pass/fail
 ```
 
 ---
@@ -132,7 +120,7 @@ eval: golden dataset → experiment → Langfuse scores → gate (baseline vs ne
 ├── ingest/               # Ingestion pipeline
 │   ├── worker.py         # arq worker: ingest_document / delete_document tasks
 │   ├── incremental.py    # Content-hash-aware (re)ingest + delete
-│   ├── run.py            # CLI: python -m ingest.run --dataset X [--limit N]
+│   ├── run.py            # CLI: python -m ingest.run --input <dir-of-pdfs>
 │   ├── parsers/          # plain_text, unstructured
 │   ├── chunking.py       # Fixed-size + overlap chunker
 │   ├── contextual.py     # LLM-generated contextual prefix (cached)
@@ -144,6 +132,7 @@ eval: golden dataset → experiment → Langfuse scores → gate (baseline vs ne
 │
 ├── generation/
 │   ├── grounded_generator.py   # Token-budgeted assembly + citation enforcement
+│   ├── metrics.py              # Native metrics (faithfulness) — survived the eval removal
 │   └── prompts.py
 │
 ├── guardrails/
@@ -158,20 +147,6 @@ eval: golden dataset → experiment → Langfuse scores → gate (baseline vs ne
 │   ├── semantic_cache.py         # Protocol + serialization + build_cache + FakeSemanticCache
 │   └── _redisvl_backend.py       # Only redisvl importer (lazy)
 │
-├── eval/                 # Langfuse-native evaluation harness
-│   ├── dataset_cli.py    # CLI: seed a dataset / add-from-trace
-│   ├── experiment.py     # CLI: run experiment → Langfuse dataset run
-│   ├── gate.py           # CLI: gate a run vs a baseline run (paired-bootstrap / thresholds)
-│   ├── evaluators.py     # Per-item metric wiring
-│   ├── langfuse_eval.py / _langfuse_backend.py  # Langfuse SDK seam (lazy-imported)
-│   ├── generation_metrics.py     # Native RAGAS-style: faithfulness, answer_relevancy, …
-│   ├── retrieval_metrics.py      # recall_at_k, ndcg_at_k, mrr, precision_at_k
-│   ├── llm_judge.py      # Holistic LLM judge
-│   ├── stats.py          # bootstrap_ci, paired_bootstrap
-│   ├── ragas_adapter.py  # Optional cross-check against the ragas library
-│   └── fast_subset.py    # 15-item subset for CI --fast runs
-│
-├── corpora/              # Dataset adapters (hotpotqa / arxiv / financebench)
 ├── observability/        # langfuse_tracing (v4 OTel), cost, dashboard
 ├── app/
 │   ├── api.py            # FastAPI: /query + /healthz (make api)
@@ -185,8 +160,7 @@ eval: golden dataset → experiment → Langfuse scores → gate (baseline vs ne
 ├── infra/
 │   ├── docker-compose.yml  # Qdrant + Postgres + Redis 8 + Langfuse v3 stack
 │   └── .env.example
-├── .github/workflows/
-│   └── eval-gate.yml     # CI: lint + offline tests + ACL-isolation + eval gate
+├── .github/workflows/    # CI workflows (lint + tests)
 ├── Makefile
 └── pyproject.toml
 ```
@@ -224,7 +198,7 @@ tenant identity from a verified JWT (`app/auth.py`), never from the request body
 
 | Method | Route | Behaviour |
 |---|---|---|
-| `POST` | `/documents` | Upload a file. Returns **`202 Accepted`** and enqueues async ingest (parse → chunk → embed → index) on the `arq`/Redis worker. |
+| `POST` | `/documents` | Upload a PDF (`multipart/form-data`, `application/pdf`). Returns **`202 Accepted`** and enqueues async ingest (parse → chunk → embed → index) on the `arq`/Redis worker. |
 | `GET` | `/documents` | List the caller's documents and their ingest status. |
 | `GET` | `/documents/{id}` | Fetch one document's metadata / status. |
 | `DELETE` | `/documents/{id}` | Returns **`202`** and enqueues async delete (drops chunks from Qdrant + BM25 + registry). |
@@ -237,21 +211,24 @@ changed.
 
 ---
 
-## Datasets
+## Documents
 
-Three corpora are supported for **evaluation**, each with a corpus adapter in
-`corpora/` and a golden eval set written by `ingest.run` to
-`data/eval/<dataset>.json`:
+The system is **PDF-document focused** — there are no bundled benchmark corpora
+or golden datasets anymore:
 
-| Dataset | Domain | Why | Tenant split |
-|---|---|---|---|
-| HotpotQA | Multi-hop QA | Gold supporting sentences → retrieval metrics out of the box | ~5 % tenant-A-only, ~5 % tenant-B-only |
-| arXiv | Scientific papers | Long documents, synthesized golden answers | Same split |
-| FinanceBench | Financial filings | Precise factual QA, citation sensitivity | Same split |
+- **Per-tenant upload:** authenticated tenants `POST /documents`
+  (`multipart/form-data`, `application/pdf`); the `arq` worker parses, chunks,
+  embeds, and indexes asynchronously.
+- **Bulk ingest:** point the CLI at a directory of PDFs:
 
-The tenant split exercises the ACL isolation guarantee: tenant-A queries must
-never surface tenant-B chunks. This is enforced end-to-end in the
-`acl-isolation` CI job against live Qdrant + Postgres.
+  ```bash
+  uv run python -m ingest.run --input ./pdfs   # or: make ingest INPUT=./pdfs
+  ```
+
+> **Eval harness removed:** the Langfuse-native evaluation stack (dataset CLI,
+> experiment runner, retrieval metrics, LLM judge, paired-bootstrap CI gate) was
+> removed in the pivot to PDF documents. The native metrics library lives on in
+> `generation/metrics.py`.
 
 ---
 
@@ -275,12 +252,8 @@ make api                            # FastAPI on :8000 (uvicorn --reload)
 arq ingest.worker.WorkerSettings    # (separate shell) start the ingest worker
 #   POST /documents to upload, POST /query to ask
 
-# 4b. Eval path — ingest a benchmark corpus and score it
-make ingest DATASET=hotpotqa
-make seed   DATASET=hotpotqa ITEMS=data/eval/hotpotqa.json   # golden items → Langfuse
-make eval   DATASET=hotpotqa RUN=baseline                    # experiment → Langfuse run
-make eval   DATASET=hotpotqa RUN=candidate
-make gate   DATASET=hotpotqa RUN=candidate                   # vs "baseline"; exits nonzero on regression
+# 4b. Bulk path — ingest a directory of PDFs without going through the API
+make ingest INPUT=./pdfs                             # python -m ingest.run --input $(INPUT)
 
 # 5. Test console — upload a document, watch it ingest, query it
 make console                        # API + console on http://127.0.0.1:8000/ui
@@ -298,9 +271,9 @@ for upload to work end-to-end; `/query` alone only needs Qdrant.
 > refuses to boot with that flag when `APP_ENV=prod`, so a production deploy exposes
 > neither route.
 
-> **Note on contextual prefixing:** pass `--contextual` to `ingest.run` to
-> enable per-chunk LLM context prefixes. This fires ~1 LLM call per chunk, so
-> respect NIM's ~40 rpm free-tier cap by using `--limit`.
+> **Note on contextual prefixing:** contextual prefixing fires ~1 LLM call per
+> chunk. On large directories, respect NIM's ~40 rpm free-tier cap — see
+> `uv run python -m ingest.run --help` for the current flags.
 
 ---
 
@@ -315,8 +288,7 @@ An opt-in, two-tier semantic cache (`cache/`) short-circuits repeated work:
 
 Entries are **tenant- and collection-isolated**, evicted precisely when a
 document they depend on changes or is deleted, and expire under a per-entry TTL
-(`CACHE_TTL_SECONDS`, default `3600`) as a staleness backstop. The cache is
-**bypassed on the eval path** so it can never inflate metrics. Backed by Redis 8
+(`CACHE_TTL_SECONDS`, default `3600`) as a staleness backstop. Backed by Redis 8
 via `redis-vl` (query engine in core); the redis-vl import is fully lazy, so the
 offline test suite and lint run without it.
 
@@ -365,41 +337,13 @@ against the actual context window; if context is insufficient the generator sets
 
 ---
 
-## Eval Methodology
+## Metrics
 
-Evaluation is **Langfuse-native**: an experiment run registers as a Langfuse
-dataset run, per-item metrics are pushed as scores linked to their traces, and
-the gate reads those scores back to decide pass/fail.
-
-**Retrieval metrics** (`eval/retrieval_metrics.py`)
-Recall@k, Precision@k, MRR, nDCG@k against gold `relevant_doc_ids` exported by
-the corpus adapter. Default k=5 (because `rerank_top_n=8`).
-
-**Generation metrics** (`eval/generation_metrics.py`)
-Native implementations of the four RAGAS metrics — no external `ragas` dependency
-in the spine (an optional `ragas_adapter.py` cross-check exists):
-- **Faithfulness**: fraction of atomic answer claims supported by contexts.
-- **Answer Relevancy**: mean cosine similarity between reverse-generated questions and the original.
-- **Context Precision**: AP-style weighted precision over context ranks.
-- **Context Recall**: fraction of ground-truth statements attributable to contexts.
-
-**LLM judge** (`eval/llm_judge.py`)
-A holistic quality score across faithfulness, completeness, and coherence.
-
-**Bootstrap confidence intervals** (`eval/stats.py`)
-`bootstrap_ci` reports 95 % CIs on all metrics; `paired_bootstrap` backs the
-delta distribution the gate uses.
-
-**CI gate** (`eval/gate.py` + `.github/workflows/eval-gate.yml`)
-`eval.gate` reads per-item scores for the new run and a named `baseline` run back
-from Langfuse and applies the configured gate (paired-bootstrap and/or absolute
-thresholds), exiting nonzero on a regression. `nan` CI-bounds/thresholds are
-treated as non-passing so an empty result can't vacuously pass.
-
-> **Status:** the eval plumbing is complete; a live `baseline` Langfuse dataset
-> run (plus `LANGFUSE_*` repo secrets) is the remaining step before the CI gate
-> has something to compare against. Local measured numbers (N=50, bge-m3):
-> HotpotQA baseline recall@5 ≈ 0.93, MRR ≈ 0.98, nDCG@5 ≈ 0.90.
+The Langfuse-native evaluation harness — dataset CLI, experiment runner,
+retrieval metrics, LLM judge, paired-bootstrap confidence intervals, and the CI
+gate — was **removed** in the pivot to PDF-only documents. What survives is the
+native metrics library in `generation/metrics.py`, including the faithfulness
+metric, kept dependency-light and injectable for offline testing.
 
 ---
 
@@ -436,7 +380,6 @@ Other operational dimensions scale similarly:
 - **Reranking** runs batched GPU inference via NVIDIA NIM containers to maximize throughput.
 - **Semantic cache** promotes the single Redis 8 node to a Redis Cluster with per-tenant keyspaces, already the shape the cache uses today.
 - **Rate limiting** moves from the per-instance question cap to a distributed Redis token-bucket middleware at the API boundary.
-- **Evaluation** scales from quick CI gates to scheduled nightly evaluations of the full corpus via runner hooks.
 
 ---
 
@@ -449,10 +392,7 @@ Other operational dimensions scale similarly:
 | `make up-app` | Start app backends only (Qdrant + Postgres) |
 | `make up-langfuse` | Start the Langfuse v3 stack (web + worker + db + clickhouse + redis + minio) |
 | `make down` | Stop all backend services |
-| `make ingest DATASET=X` | Ingest corpus X (hotpotqa / arxiv / financebench) |
-| `make seed DATASET=X ITEMS=…` | Upload golden items to a Langfuse dataset |
-| `make eval DATASET=X RUN=R` | Run an eval experiment → Langfuse dataset run |
-| `make gate DATASET=X RUN=R` | Gate run R against the `baseline` run; exits nonzero on regression |
+| `make ingest INPUT=<dir>` | Bulk-ingest the PDF documents in a directory |
 | `make console` | Launch the API + test console on http://127.0.0.1:8000/ui |
 | `make api` | Launch the FastAPI service on port 8000 (uvicorn --reload) |
 | `make test` | Run the test suite (`pytest`) |
@@ -460,11 +400,11 @@ Other operational dimensions scale similarly:
 | `make fmt` | Format with ruff |
 | `make clean` | Remove `.pytest_cache`, `.ruff_cache` |
 
-For `ingest` with a size limit or contextual prefixing, call the module
+For more ingest options (batch size, contextual prefixing), call the module
 directly:
 
 ```bash
-uv run python -m ingest.run --dataset hotpotqa --limit 200 --contextual
+uv run python -m ingest.run --help
 ```
 
 ---
@@ -474,7 +414,8 @@ uv run python -m ingest.run --dataset hotpotqa --limit 200 --contextual
 The core safety/correctness work is landed: JWT auth, output-block containment,
 fail-closed ingest PII redaction, pre-trace query redaction, and true per-tenant
 hybrid retrieval. What remains is operational rather than safety-critical — a
-live eval `baseline` so the CI gate can catch regressions, a Qdrant-client
-timeout/retry, semantic-cache go-live, and deploy packaging (Dockerfile, rate
-limiting). See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the
+Qdrant-client timeout/retry, semantic-cache go-live, and deploy packaging
+(Dockerfile, rate limiting). The benchmark corpora and the Langfuse eval
+harness/gate were removed in the 2026-08 pivot to PDF documents. See
+[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the
 reconciled, line-referenced breakdown.
