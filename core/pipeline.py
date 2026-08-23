@@ -140,7 +140,7 @@ class RAGPipeline:
         ) as root:
             # We recreate safe tracing records since actual redaction ran
             if self.guardrails is not None and guard_log:
-                with self.tracer.span("guardrail.input") as s_in:
+                with self.tracer.span("guardrail.input", as_type="guardrail") as s_in:
                     s_in.update(output={"actions": [r.action.value for r in in_results]})
 
             # --- Query rewriting (SP12): retrieval-only -------------------------
@@ -157,7 +157,12 @@ class RAGPipeline:
             cache_on = self.answer_cache is not None or self.retrieval_cache is not None
             key_vec = None
             if cache_on and self.embedder is not None:
-                key_vec = self.embedder.embed_query(retrieval_question)
+                with self.tracer.span(
+                    "embed_query", as_type="embedding", model=self.settings.embed_model
+                ) as s_emb:
+                    key_vec = self.embedder.embed_query(retrieval_question)
+                    if key_vec is not None:
+                        s_emb.update(dim=len(key_vec), purpose="cache_key")
             if key_vec is not None and self.answer_cache is not None:
                 hit = self.answer_cache.lookup(
                     tenant_id=acl.tenant_id, collection_id=collection_id, embedding=key_vec)
@@ -166,6 +171,11 @@ class RAGPipeline:
                     cached = answer_from_payload(hit)
                     cached.metadata.setdefault("stage_latencies_ms", {})
                     cached.metadata["cache"] = "answer_hit"
+                    with self.tracer.span(
+                        "cache.answer_hit", as_type="tool", cache="answer_hit",
+                        n_citations=len(cached.citations),
+                    ) as s_cache:
+                        s_cache.update(output={"cache": "answer_hit"})
                     return cached
 
             q = Query(
@@ -176,24 +186,45 @@ class RAGPipeline:
                 collection_id=collection_id,
             )
 
-            with self.tracer.span("retrieval", top_k=q.top_k) as s_ret:
+            with self.tracer.span(
+                "retrieval", as_type="retriever", top_k=q.top_k
+            ) as s_ret:
                 scored = None
+                cache_status = "miss"
                 if key_vec is not None and self.retrieval_cache is not None:
                     rhit = self.retrieval_cache.lookup(
                         tenant_id=acl.tenant_id, collection_id=collection_id, embedding=key_vec)
                     if rhit is not None:
                         scored = scored_from_payload(rhit)
+                        cache_status = "retrieval_hit"
                         latencies["retrieval_ms"] = 0.0
-                        s_ret.update(output={"cache": "retrieval_hit", "n_hits": len(scored)})
                 if scored is None:
                     scored, ms = timed(self.retriever.retrieve)(q)
                     latencies["retrieval_ms"] = ms
-                    s_ret.update(output={"n_hits": len(scored)})
                     if key_vec is not None and self.retrieval_cache is not None:
                         self.retrieval_cache.store(
                             tenant_id=acl.tenant_id, collection_id=collection_id,
                             embedding=key_vec, payload=scored_to_payload(scored),
                             doc_ids=doc_ids_of(scored))
+                s_ret.update(
+                    output={
+                        "n_hits": len(scored),
+                        "cache": cache_status,
+                        "by_source": {
+                            src.value: sum(1 for sc in scored if sc.source == src)
+                            for src in set(sc.source for sc in scored)
+                        },
+                        "hits": [
+                            {
+                                "chunk_id": sc.chunk_id,
+                                "doc_id": sc.chunk.doc_id,
+                                "score": round(sc.score, 6),
+                                "source": sc.source.value,
+                            }
+                            for sc in scored[:10]
+                        ],
+                    },
+                )
                 suspected = sorted({
                     lbl for sc in scored for lbl in scan_for_injection(sc.chunk.text)
                 })
@@ -201,15 +232,26 @@ class RAGPipeline:
                     s_ret.update(output={"indirect_injection_suspected": suspected})
                     logger.warning("indirect_injection_suspected: %s", suspected)
 
-            with self.tracer.span("generation", model=self.settings.gen_model) as s_gen:
+            with self.tracer.span(
+                "generation",
+                as_type="generation",
+                model=self.settings.gen_model,
+            ) as s_gen:
                 ans, ms = timed(self.grounded.generate)(question, scored)
                 latencies["generation_ms"] = ms
                 s_gen.update(
+                    input={"question": question, "n_context_chunks": len(ans.contexts)},
                     output={"refused": ans.refused, "n_citations": len(ans.citations)},
                     metadata={
                         "prompt_tokens": ans.usage.prompt_tokens,
                         "completion_tokens": ans.usage.completion_tokens,
                     },
+                    usage_details={
+                        "input": ans.usage.prompt_tokens,
+                        "output": ans.usage.completion_tokens,
+                        "total": ans.usage.total_tokens,
+                    },
+                    model=ans.model or self.settings.gen_model,
                 )
 
             if suspected:
@@ -217,7 +259,7 @@ class RAGPipeline:
 
             # --- Output guardrails: citation / schema / groundedness ---------
             if self.guardrails is not None:
-                with self.tracer.span("guardrail.output") as s_out:
+                with self.tracer.span("guardrail.output", as_type="guardrail") as s_out:
                     out_results = self.guardrails.check_output(
                         ans,
                         context={

@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     nvidia_api_key: str = ""
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    # OpenRouter (OpenAI-compatible at https://openrouter.ai/api/v1). Free-tier
+    # models are usable with an unbilled key; embeddings still cost credits, so
+    # embed_* should stay on another provider when using OpenRouter for chat.
+    openrouter_api_key: str = ""
 
     # --- OpenAI-compatible model router (one base_url + key for all roles) ---
     # Any model role left at the NIM default url / empty key inherits these.
@@ -182,16 +186,22 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _apply_llm_router(self) -> "Settings":
-        """Point every model role at one OpenAI-compatible router unless the role
-        was explicitly overridden. A role url still at the NIM default, or a role
-        with an empty base url, adopts llm_base_url; empty role keys adopt
-        llm_api_key. The reranker is deliberately not routed."""
+        """Point every CHAT model role at one OpenAI-compatible router unless the
+        role was explicitly overridden. A role url still at the NIM default, or a
+        role with an empty base url, adopts llm_base_url; empty role keys adopt
+        llm_api_key. The reranker is deliberately not routed.
+
+        ``embed_base_url`` is intentionally EXCLUDED from the router: embeddings
+        must stay coherent with the vector index they built (model + dimension),
+        regardless of which chat provider is routed, and OpenAI-compatible
+        aggregators may not serve the same embedding model. Set EMBED_BASE_URL
+        explicitly to route embeddings anywhere."""
         if self.llm_base_url:
-            for field in ("embed_base_url", "gen_base_url", "context_base_url", "judge_base_url"):
+            for field in ("gen_base_url", "context_base_url", "judge_base_url"):
                 if getattr(self, field) in ("", NIM_BASE_URL):
                     setattr(self, field, self.llm_base_url)
         if self.llm_api_key:
-            for field in ("embed_api_key", "gen_api_key", "context_api_key", "judge_api_key"):
+            for field in ("gen_api_key", "context_api_key", "judge_api_key"):
                 if not getattr(self, field):
                     setattr(self, field, self.llm_api_key)
         return self
@@ -203,6 +213,8 @@ class Settings(BaseSettings):
         def pick(explicit: str, base_url: str) -> str:
             if explicit:
                 return explicit
+            if "openrouter.ai" in base_url:
+                return self.openai_api_key or self.openrouter_api_key or self.nvidia_api_key
             if "openai.com" in base_url:
                 return self.openai_api_key or self.nvidia_api_key
             return self.nvidia_api_key or self.openai_api_key

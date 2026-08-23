@@ -44,6 +44,22 @@ def get_pipeline():
 
 app = FastAPI(title="Production RAG API", version="1.0.0")
 
+
+@app.on_event("shutdown")
+def _flush_tracing() -> None:
+    """Flush buffered Langfuse events at process shutdown.
+
+    The v4 SDK batches (~5 s interval) and registers its own atexit hook, but
+    SIGKILL / scale-in skips atexit — this drops the last window of spans,
+    exactly the ones you want during incidents. Best-effort: never block exit.
+    """
+    try:
+        from observability.langfuse_tracing import Tracer
+
+        Tracer(get_settings()).flush()
+    except Exception:
+        pass
+
 # Async document ingestion API (upload + tenant-scoped status).
 from app.documents import router as documents_router  # noqa: E402
 
