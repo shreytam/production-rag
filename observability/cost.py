@@ -24,6 +24,8 @@ PRICING: dict[str, tuple[float, float]] = {
     "nvidia/llama-3.2-nv-rerankqa-1b-v2": (0.00, 0.00),  # NIM free tier (rerank, no completion)
     # OpenRouter free-tier chat models — $0.00 on the free tier
     "stealth/ox-alpha": (0.00, 0.00),                # OpenRouter free tier
+    "nvidia/nemotron-3-super-120b-a12b:free": (0.00, 0.00),   # OpenRouter free tier
+    "nvidia/nemotron-nano-9b-v2:free": (0.00, 0.00),          # OpenRouter free tier
     # Local models — run in-process, no per-token provider charge
     "BAAI/bge-reranker-v2-m3": (0.00, 0.00),         # local reranker (CPU/GPU inference)
     # Anthropic models — estimate from public pricing page
