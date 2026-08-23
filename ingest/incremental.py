@@ -6,6 +6,19 @@ from core.types import ACLContext, Chunk, ChunkRecord, DocManifest
 
 _PROMPT_VERSION = "v1"
 
+_TRACER = None
+
+
+def _get_tracer():
+    """Cached no-op-safe tracer so ingest spans cost nothing when disabled."""
+    global _TRACER
+    if _TRACER is None:
+        from core.config import get_settings
+        from observability.langfuse_tracing import Tracer
+
+        _TRACER = Tracer(get_settings())
+    return _TRACER
+
 
 def _hash(text: str) -> str:
     return hashlib.blake2b(text.encode("utf-8"), digest_size=16).hexdigest()
@@ -30,45 +43,64 @@ class IncrementalIngestor:
 
     def ingest_document(self, tenant_id: str, doc_id: str,
                         chunks: list[Chunk], acl: ACLContext) -> int:
-        old = self._manifest.load(tenant_id, doc_id)
-        old_chunks = old.chunks if old else {}
+        tracer = _get_tracer()
+        with tracer.span(
+            "ingest.document", as_type="span",
+            doc_id=doc_id, tenant_id=tenant_id, n_chunks=len(chunks),
+        ) as s_doc:
+            old = self._manifest.load(tenant_id, doc_id)
+            old_chunks = old.chunks if old else {}
 
-        new_records: dict[str, ChunkRecord] = {}
-        to_embed: list[Chunk] = []
-        to_meta: dict[str, dict] = {}
+            new_records: dict[str, ChunkRecord] = {}
+            to_embed: list[Chunk] = []
+            to_meta: dict[str, dict] = {}
 
-        for c in chunks:
-            e_hash = _hash(c.embed_text)
-            m_hash = _meta_hash(c)
-            new_records[c.chunk_id] = ChunkRecord(
-                chunk_id=c.chunk_id, ordinal=c.ordinal,
-                embed_hash=e_hash, meta_hash=m_hash,
+            for c in chunks:
+                e_hash = _hash(c.embed_text)
+                m_hash = _meta_hash(c)
+                new_records[c.chunk_id] = ChunkRecord(
+                    chunk_id=c.chunk_id, ordinal=c.ordinal,
+                    embed_hash=e_hash, meta_hash=m_hash,
+                )
+                prev = old_chunks.get(c.chunk_id)
+                if prev is None or prev.embed_hash != e_hash:
+                    to_embed.append(c)
+                elif prev.meta_hash != m_hash:
+                    to_meta[c.chunk_id] = {"title": c.title}
+
+            to_delete = [cid for cid in old_chunks if cid not in new_records]
+
+            if to_embed:
+                from core.config import get_settings
+
+                with tracer.span(
+                    "ingest.embed_documents", as_type="embedding",
+                    model=get_settings().embed_model, n_chunks=len(to_embed),
+                ) as s_emb:
+                    vectors = self._embedder.embed_documents(
+                        [c.embed_text for c in to_embed])
+                    s_emb.update(n_chars=sum(len(c.embed_text) for c in to_embed))
+                embedded = [c.model_copy(update={"embedding": v})
+                            for c, v in zip(to_embed, vectors)]
+                self._store.upsert(embedded)
+                self._sparse.add(embedded)
+            if to_meta:
+                self._store.update_metadata(to_meta, acl)
+            if to_delete:
+                self._store.delete(to_delete, acl)
+                self._sparse.delete(to_delete, acl)
+
+            # D-ORDER: manifest only after store writes succeed.
+            self._manifest.save(DocManifest(
+                tenant_id=tenant_id, doc_id=doc_id,
+                prompt_version=_PROMPT_VERSION, chunks=new_records,
+            ))
+            s_doc.update(
+                embedded=len(to_embed),
+                meta_updated=len(to_meta),
+                deleted=len(to_delete),
+                unchanged=len(new_records) - len(to_embed) - len(to_meta),
             )
-            prev = old_chunks.get(c.chunk_id)
-            if prev is None or prev.embed_hash != e_hash:
-                to_embed.append(c)
-            elif prev.meta_hash != m_hash:
-                to_meta[c.chunk_id] = {"title": c.title}
-
-        to_delete = [cid for cid in old_chunks if cid not in new_records]
-
-        if to_embed:
-            vectors = self._embedder.embed_documents([c.embed_text for c in to_embed])
-            embedded = [c.model_copy(update={"embedding": v})
-                        for c, v in zip(to_embed, vectors)]
-            self._store.upsert(embedded)
-            self._sparse.add(embedded)
-        if to_meta:
-            self._store.update_metadata(to_meta, acl)
-        if to_delete:
-            self._store.delete(to_delete, acl)
-            self._sparse.delete(to_delete, acl)
-
-        # D-ORDER: manifest only after store writes succeed.
-        self._manifest.save(DocManifest(
-            tenant_id=tenant_id, doc_id=doc_id,
-            prompt_version=_PROMPT_VERSION, chunks=new_records,
-        ))
         return len(new_records)
 
     def delete_document(self, tenant_id: str, doc_id: str, acl: ACLContext) -> int:
@@ -80,4 +112,9 @@ class IncrementalIngestor:
             self._store.delete(chunk_ids, acl)
             self._sparse.delete(chunk_ids, acl)
         self._manifest.delete(tenant_id, doc_id)
+        with _get_tracer().span(
+            "ingest.delete_document", as_type="span",
+            doc_id=doc_id, tenant_id=tenant_id, n_chunks=len(chunk_ids),
+        ):
+            pass
         return len(chunk_ids)
