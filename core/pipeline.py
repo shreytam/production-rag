@@ -206,31 +206,31 @@ class RAGPipeline:
                             tenant_id=acl.tenant_id, collection_id=collection_id,
                             embedding=key_vec, payload=scored_to_payload(scored),
                             doc_ids=doc_ids_of(scored))
-                s_ret.update(
-                    output={
-                        "n_hits": len(scored),
-                        "cache": cache_status,
-                        "by_source": {
-                            src.value: sum(1 for sc in scored if sc.source == src)
-                            for src in set(sc.source for sc in scored)
-                        },
-                        "hits": [
-                            {
-                                "chunk_id": sc.chunk_id,
-                                "doc_id": sc.chunk.doc_id,
-                                "score": round(sc.score, 6),
-                                "source": sc.source.value,
-                            }
-                            for sc in scored[:10]
-                        ],
+                ret_output: dict[str, Any] = {
+                    "n_hits": len(scored),
+                    "cache": cache_status,
+                    "by_source": {
+                        src.value: sum(1 for sc in scored if sc.source == src)
+                        for src in set(sc.source for sc in scored)
                     },
-                )
+                    "hits": [
+                        {
+                            "chunk_id": sc.chunk_id,
+                            "doc_id": sc.chunk.doc_id,
+                            "score": round(sc.score, 6),
+                            "source": sc.source.value,
+                        }
+                        for sc in scored[:10]
+                    ],
+                }
                 suspected = sorted({
                     lbl for sc in scored for lbl in scan_for_injection(sc.chunk.text)
                 })
+                # Merge (not overwrite): .update(output=...) replaces the field.
                 if suspected:
-                    s_ret.update(output={"indirect_injection_suspected": suspected})
+                    ret_output["indirect_injection_suspected"] = suspected
                     logger.warning("indirect_injection_suspected: %s", suspected)
+                s_ret.update(output=ret_output)
 
             with self.tracer.span(
                 "generation",
