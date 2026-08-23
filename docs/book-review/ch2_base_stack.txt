@@ -1,0 +1,1621 @@
+a user sends a query to the RAG system, and uses the data prepared in the ingestion
+flow to respond to user queries.
+The Ingestion Flow
+In the ingestion flow, source documents are pre-processed (i.e., parsed and chunked),
+and the product of this pre-processing is stored in a way that enables efficient
+searching and retrieval later, for an LLM to fulfill a task or respond to the user query.
+The ingestion flow typically consists of four steps: parsing, chunking, embedding, and
+indexing (Figure 2-1).
+Figure 2-1. Major components or steps in the ingestion flow; note that in production
+systems, these steps are typically orchestrated asynchronously with retries
+The data for ingestion can come from various sources, such as databases, files (local
+or cloud), APIs, or web scraping. Data from databases and APIs is generally easier to
+ingest because it is structured. In these cases, the schema—which defines the fields
+and data types—is known in advance. For example, if you were to ingest conversa‐
+tions between an LLM and users, we know in advance that each message has a role
+field (whether the message is from the LLM or a user) and a timestamp in addition
+to the message text itself, and that a conversation is a list of such compound message
+objects. Preprocessing of data from databases or APIs is usually easy and minimal,
+and may include, for example, flattening a nested structure and discarding fields that
+are not useful for your RAG tasks from further ingestion steps. In the example of
+ingesting LLM–user conversations, we may flatten conversations into a 2D table of
+24 
+| 
+Chapter 2: The Base RAG Stack
+four columns: the message text, the role (who sent the message, the user or the LLM),
+the timestamp, and conversation ID, which is used to correspond messages belonging
+to the same conversation. Only the message text will be embedded for semantic
+search down the road.
+In contrast, the preprocessing of files, except pure text files (e.g., *.txt), can be more
+complex, because they can come in various formats (PDF, DOCX, PPTX, HTML,
+etc.), which contain more information than what you want RAG to operate on.
+For example, in Microsoft Word documents, the formatting and styling information
+is usually not meaningful to RAG, and thus needs to be identified and discarded.
+Another challenge in ingesting files is that the textual or tabular data you want might
+include scanned images, which require techniques like optical character recognition
+(OCR) to extract the text. The process of separating information of different modali‐
+ties and purposes and extracting only the ones that you need is called parsing. We will
+cover these topics in detail in “Document Parsing” on page 28.
+Parsing yields discrete text segments that provide the necessary context for the LLM
+to generate accurate responses. However, these segments are often too long for LLMs
+to process in one go, due to reasons such as context window size, cost, and the
+effectiveness of LLMs. Also, most questions need to only attend to a tiny fraction of
+the lengthy raw segments from documents. A lengthy context is not only wasteful
+but may backfire, e.g., by reducing the retrieval effectiveness. Therefore, we need to
+break them down into smaller pieces called chunks. The process of breaking them
+into chunks is called chunking, which we will cover in “Text Chunking” on page 37.
+Up to this point, your data remains in its original form (a text is still a linear sequence
+of characters) or modality, which may make searching and retrieval ineffective. For
+example, if your query text is “United States,” then you won’t be able to match it with
+“USA” in the character space directly. Or, if your query text is “Silicon Valley,” you
+won’t be able to find Chinese documents containing “硅谷” or “矽谷” directly using
+string comparison. One way to improve the searchability is to convert the text into a
+vector of numbers that captures its semantic meaning. This process and its output are
+called embedding (or, more precisely, dense embedding or vector embedding), which
+we will cover in “Embedding Models” on page 43.
+Besides embedding, which transforms data to numerical vectors, there are other ways
+to improve searchability without transforming the data representation or format,
+such as using inverted indices or keyword-based indexing. These methods are more
+traditional and often used in search engines, but they may not capture the semantic
+meaning of the text as effectively as embeddings do. However, they can complement
+embeddings in certain scenarios, such as finding contracts with a particular business
+whose name has never been seen before. Another example is tolerating typos in user
+queries, where keyword-based indexing can help match queries with similar terms.
+RAG Stack Flows 
+| 
+25
+These methods will be detailed later in Chapter 3, in the section “Hybrid Search” on
+page 76.
+Together with embedding, all methods to transform and organize information for fast
+and easy retrieval later are put under the umbrella of indexing, which allows for fast
+lookups and efficient use of resources when searching through large datasets.
+Representation of information is just the first step to improving searchability. For
+dense embeddings, the next step is to store these embeddings in a way that allows
+for efficient retrieval. This is where vector databases come in, which we will cover in
+“Vector Databases” on page 51.
+The Query Flow
+After the ingestion flow, the RAG stack is ready to respond to your user’s query
+using the ingested data. The query can be a question, a command, a sequence of
+instructions, or any task that you want the RAG stack to perform. For example,
+“Write a poem based on my travels in 2025.”
+The power of RAG is in enabling LLMs to respond to queries that require knowledge
+unseen in their training data. An off-the-shelf LLM may not know who you are, nor
+where you were in 2025. However, if you have ingested your 2025 diary or blog posts
+into the RAG stack, then it can retrieve information about your travels in 2025 from
+these documents and provide them to the LLM to generate a poem based on them.
+Figure 2-2 shows the steps in the query flow.
+Figure 2-2. Major components or steps of the query flow
+The first step in the query flow is query rewriting—the process of transforming a user
+query into a format that improves the LLM’s performance. For example, the query
+“Write a poem based on my travels in 2025” has two parts: “Write a poem” and “based
+on my travels in 2025.” The first part is a command, while the second part is a context
+to be retrieved and sent to the LLM to fulfill the command. If “write a poem” is
+included in the retrieval query, it may lead to irrelevant results, such as retrieving
+26 
+| 
+Chapter 2: The Base RAG Stack
+poems not about travel and 2025 and leaving non-poem info about travel and 2025
+out. Then, the LLM may end up giving you a poem based on other poems, but not
+about travel or 2025. Therefore, we need to rewrite the query to focus on the context
+part, which is “my travels in 2025.” Let’s call the query used for information retrieval
+the retrieval query, to distinguish it from the original user query.
+The next step is to retrieve relevant information based on the retrieval query. There
+are usually two search categories: semantic search (also called dense retrieval) and
+keyword search (also called sparse retrieval).
+In semantic search, the retrieval query is converted into an embedding vector, which
+is then used to search for similar vectors in the vector database. The similarity
+between two vectors can be efficiently measured using a mathematical operation
+called a dot product, which is also known as the inner product or scalar product.
+Today’s embedding models almost all produce normalized or unit embedding vectors,
+whose magnitudes are 1. When two vectors in the dot product operation are unit
+vectors, the dot product is equivalent to cosine similarity, which measures how
+aligned the directions of the two vectors are.
+Keyword search is a group of search techniques, such as term frequency–inverse
+document frequency (TF-IDF) and BM25 (BM stands for best matching), developed
+long before semantic search. Unlike semantic search, which requires converting
+strings to vectors and operates on the vector space, keyword search directly matches
+strings, and thus operates in the lexicon space. Modern embedding models can also
+generate vectors representing words or phrases for matching purposes. To distinguish
+such vectors from dense embedding vectors, we refer to them as sparse vectors.
+Both semantic and keyword searches have strengths and weaknesses. To combine
+the best of both worlds, you can use a combination of both, which is called hybrid
+search. In the base stack (which is the subject of this chapter), we focus on pure
+semantic search, while hybrid search (for better robustness on rare tokens, typos, and
+compliance with exact-match constraints) will be discussed in Chapter 3.
+For cost and effectiveness reasons, we want to pick the most relevant and informative
+chunks and feed them to the LLM. This sounds easy, right? Just rank chunks based on
+their similarity scores with the retrieval query and pick the top ones. Unfortunately,
+it’s not that simple. There are many reasons that the ranking using embedding models
+may not be optimal for the LLM, and, hence, we often apply an additional step of
+reranking.
+First, retrieval models may return multiple chunks that convey redundant informa‐
+tion. Sending all of these to the LLM wastes both token budget and computation. This
+problem has been observed since long before the emergence of LLMs. The maximum
+marginal relevance (MMR) reranker, which balances relevance with diversity to
+reduce redundancy among selected chunks, was developed in 1998.
+RAG Stack Flows 
+| 
+27
+Second, for semantic search, the dot product similarity scores used in embedding-
+based retrieval do not fully exploit the attention mechanism that underlies LLMs.
+Embedding models represent each text independently, and their similarity is meas‐
+ured post hoc via vector operations.
+In contrast to embedding models, transformer-based rerankers evaluate the query
+and candidate chunk jointly, allowing cross-attention to better capture nuanced rela‐
+tionships, context alignment, and semantic relevance between the two texts.
+Once retrieval is finished, we are finally ready to send the chunks to the generative
+LLM, which will inspect the original user query in the context of the retrieved chunks
+to generate a response. We’ll cover this step in detail in “Generative LLMs” on page 55.
+Next, we will look in detail at each layer of the RAG stack.
+Document Parsing
+Quite often, the text data you want to use in RAG is not in a simple text format, but
+rather in formats such as PDF, PPTX, DOCX, HTML, and Markdown. In the case
+of these formats, the text containing knowledge to answer your RAG queries is often
+mixed with typesetting/styling information, such as fonts, which may not be useful
+for answering your RAG queries.
+PDF files are particularly challenging, in that a page inside one consists of individual
+characters and their coordinates. Not only do you want to exclude the coordinates
+from RAG ingestion, but also, the characters need to be concatenated into words or
+sentences based on their coordinates. In some more challenging cases, the text of
+interest may be an image scanned from a paper document, which requires techniques
+like optical character recognition to extract the text. OCR accuracy heavily depends
+on the image quality (resolution and clarity), the complexity and style of the fonts
+used, and the layout itself.
+The step separating the text that contains the knowledge we want to use in RAG
+from the rest is called document parsing. It’s called parsing because such formats
+follow designated syntaxes or structures, like a computer program, and we need to
+syntactically determine the segments of text that contain the knowledge we want to
+use in RAG.
+It is critical to correctly parse all of these file formats, as accuracy at this stage
+is paramount, and any errors or inconsistencies at ingestion will compromise the
+integrity and reliability of the RAG system’s knowledge base and its ability to provide
+quality responses to user queries.
+28 
+| 
+Chapter 2: The Base RAG Stack
+1 The only exception is tagged PDF files, which are designed for accessible reasons and do have structures.
+Extracting Text from Various File Formats
+Let’s start with PDF files, one of the most common types of documents ingested into
+RAG.
+Rooted in the PostScript language, the PDF was fundamentally designed to render the
+visual appearance of a document, not its logical structure. For this reason, most PDF
+files1 do not contain a schema or hierarchical content. Instead, a word is stored as a
+collection of individual characters with 2D coordinates, which is why text extraction
+is so challenging.
+This is also why extracting words, sentences, or paragraphs from PDF files requires
+complex algorithms that analyze relationships between coordinates of characters. For
+example, to tell whether a page has two columns, you need to analyze the clustering
+and alignment of all characters on the page. Otherwise, you may mix lines across two
+columns, resulting in unmeaningful sentences.
+Fortunately, there are many libraries that can help. A single Google search, like “PDF
+text extraction library,” will yield numerous solutions, including popular libraries like
+pypdf (including PyPDF2, PyPDF3, and PyPDF4—it’s a crazy history!), PyMuPDF,
+and pdfminer.six (the community edition of PDFMiner). Adobe, the inventor of the
+PDF, also provides a commercial product called the PDF Extract API that parses a
+PDF file into a JSON string. Unstructured.io is a startup whose offerings include PDF
+extractors.
+Quite often, a PDF file originates from scanned documents, where every page is a
+picture. To get textual or tabular info out of such pages, OCR needs to be utilized.
+Tesseract is one of the most famous open source libraries for OCR, and hyperscalers
+like Google Cloud or Microsoft Azure also offer OCR APIs. In addition, there are
+quite a number of startups focused on OCR, such as Reducto.ai.
+Compared to the PDF, the DOCX or HTML formats are relatively easier to work
+with, as they belong to the family of XML formats, where information and their
+attributes (such as font size, color, etc.) are interleaved and stored in a structured way.
+For example, in HTML, the text “The capital of France is Paris.” is represented as The
+capital of France is <b>Paris</b>. In this case, the <b> tag indicates that the text
+“Paris” should be displayed in bold. However, the <b> tag probably isn’t needed when
+answering the query “What is the capital of France?” So, during parsing, we want to
+discard the <b> tag and return only the text “The capital of France is Paris.”
+There are many libraries available for parsing and extracting text from DOCX and
+HTML files, such as python-docx for DOCX files and Beautiful Soup for HTML files,
+Document Parsing 
+| 
+29
+and like PDF files, DOCX or HTML are also container formats that may include
+multimodal data like tables or images (which we discuss in more detail in Chapter 8).
+It is not always true that tags and attributes should be discarded. Some tags or
+attributes can provide useful clues down the pipeline. Say the text to be processed is a
+chat log like this:
+<div class="chat-log">
+    <div class="user" id="msg1">What is the capital of France?</div>
+    <div class="AI" id="msg2">The capital of France is Paris.</div>
+    <div class="user" id="msg3">What language is spoken there?</div>
+    <div class="AI" id="msg4">French.</div>
+</div>
+If we discard the tags and attributes, we lose the context of who said what and when.
+Later, if the query is “According to AI, where does the President of France live?”, we
+will not be able to answer.
+A better solution is to record the class as metadata, as shown in Table 2-1.
+Table 2-1. Record the class as metadata
+Text to ingest
+Metadata (in JSON)
+What is the capital of France?
+{"who":"user"}
+The capital of France is Paris
+{"who":"AI"}
+Metadata is additional information about the text segment that can be used to pro‐
+vide context or other useful information. We will see how to store metadata in vector
+databases in “Vector Databases” on page 51.
+During query rewriting, you can now split the query into a main query (“where does
+the President of France live”) that will be used for semantic search, and a metadata
+filter that constrains “who” to the value “AI”; in this way, messages from the user,
+even if they said things about the French capital, will be excluded from the retrieval.
+Metadata filtering is a database operation similar to the where clause in SQL—it has
+nothing to do with semantic search.
+Document Parsing with Vision–Language Models
+Today’s LLMs, such as GPT-5.x series, can process non-textual data. To distinguish
+from an LLM that only processes textual data, we sometimes use the term vision–
+language models (VLMs) to denote a model that can process both visual information
+(still images or videos) and texts. A VLM can be leveraged to directly parse various
+file formats.
+This approach is especially useful for documents with complex layouts such as slides,
+forms, or infographics. However, do exercise this option with great caution. VLMs
+30 
+| 
+Chapter 2: The Base RAG Stack
+may not always be accurate in extracting text. Due to their generative nature, they
+are prone to hallucination, and, as of today, often cannot reproduce the images in
+documents that are given to them. Using a VLM for parsing may be quite expensive
+and slow for large, enterprise-scale datasets.
+Therefore, this approach should be reserved for difficult, high-value document types
+or as a fallback when classical parsers fail. We’d recommend a “cheapest successful
+parser-first” strategy (PDF libs, HTML parsers, OCR) before calling a VLM.
+Code Example: Parsing Files
+Now let’s walk through three coding examples: parsing PDF files with PyMuPDF,
+parsing DOCX files with python-docx, and parsing PDF files using GPT-5.1. The
+working Jupyter notebooks can be found in the GitHub repo of this chapter.
+Working with PDF files in PyMuPDF
+PyMuPDF is a powerful library for working with PDF files in Python. The documen‐
+tation of PyMuPDF provides detailed examples on how to extract text, images, and
+tables from PDF files. Here, we briefly go over some examples.
+As mentioned earlier, in PDF files, text is not a sequence of characters. Instead,
+characters are stored individually. It is the job of PyMuPDF to group characters based
+on their proximity.
+The following code iterates through a PDF file and extracts all text on each page as
+one string:
+with pymupdf.open("sample_data/sample_data.pdf") as doc:
+  for page in doc:
+    text: str = page.get_text()
+    print(text, end="---")
+The output will look like this:
+Sample doc for RAG Book Chapter 2
+This is a great chapter 
+Revision
+Year
+0.0.1
+2025
+Book
+Revision
+Year
+Author
+Memory and RAG
+0.1.0
+2026
+A great researcher
+RAG and AI
+Document Parsing 
+| 
+31
+0.0.1
+2025
+---
+Clearly, this is not ideal because the text from the table is mixed with regular,
+unstructured text.
+One way to improve things is to extract the text by block, where a block is a collection
+of text that PyMuPDF groups together.
+with pymupdf.open("sample_data/sample_data.pdf") as doc:
+  for page in doc:
+    text: str = page.get_text("blocks")
+    for block in text:
+      print(block[4], end="---\n")
+To make the block boundaries clear, we purposefully end each block with ---\n. The
+output will look like this:
+Sample doc for RAG Book Chapter 2
+---
+This is a great chapter 
+---
+Revision
+Year
+0.0.1
+2025
+---
+Book
+Revision
+Year
+Author
+Memory and RAG
+0.1.0
+2026
+A great researcher
+RAG and AI
+0.0.1
+2025
+---
+However, this is still not good enough, as we cannot tell which block belongs to the
+table and which block belongs to regular text. To get only unstructured text, we need
+to first extract table contents and subtract table contexts from all texts.
+Extracting table contents using PyMuPDF is relatively easy:
+with pymupdf.open("sample_data/sample_data.pdf") as doc:
+  for page in doc: 
+    tables = page.find_tables()
+    for i, table in enumerate(tables):
+      print (f"Table {i+1}")
+      print(table.extract(), end="\n\n")
+32 
+| 
+Chapter 2: The Base RAG Stack
+The function find_tables() finds all tables in a given page. Each table can be
+extracted using the extract() function that returns a table (Table 2-2 is our example)
+as a 2D Python list, with rows as sublists.
+Table 2-2. An example table to explain table-to-JSON serialization
+Revision
+Year
+0.0.1
+2025
+For example, a table that looks like Table 2-2 will be extracted by the code above as
+[
+    ['Revision', 'Year'], 
+    ['0.0.1', '2025']
+]
+With the table contents in hand, we can obtain non-table text by filtering all text with
+table contents. The process is a bit more complicated, shown in the following code:
+# Extract non-table text
+def extract_unstructured_text(pdf_path):
+    """
+    Extract unstructured text from PDF, excluding table content.
+    Returns clean paragraph text without tabular data.
+    """
+    unstructured_text = []
+    
+    with pymupdf.open(pdf_path) as doc:
+        for page in doc:
+            # Get all text from the page
+            page_text = page.get_text()
+            
+            # Find tables on the page to exclude their content
+            tables = page.find_tables()
+            
+            # Get table text blocks to filter out
+            table_text_blocks = []
+            if tables.tables:
+                for table in tables:
+                    # Get table bounding box
+                    bbox = table.bbox
+                    # Extract text within table bounds
+                    table_text = page.get_text(clip=bbox)
+                    table_text_blocks.append(table_text.strip())
+            
+            # Split page text into lines and filter out table content
+            lines = page_text.split('\n')
+            filtered_lines = []
+            
+            for line in lines:
+                line = line.strip()
+Document Parsing 
+| 
+33
+                if line:  # Skip empty lines
+                    # Check if this line is part of any table
+                    is_table_content = False
+                    for table_text in table_text_blocks:
+                        if line in table_text:
+                            is_table_content = True
+                            break
+                    
+                    # Only include non-table content
+                    if not is_table_content:
+                        filtered_lines.append(line)
+            
+            # Join filtered lines back into paragraphs
+            page_unstructured = '\n'.join(filtered_lines)
+            if page_unstructured.strip():
+                unstructured_text.append(page_unstructured)
+    
+    return '\n\n'.join(unstructured_text)
+# Test the function
+unstructured_content = extract_unstructured_text("sample_data/sample_data.pdf")
+print("Unstructured text extracted:")
+print(unstructured_content)
+This time, we get what we expected:
+Unstructured text extracted:
+Sample doc for RAG Book Chapter 2
+This is a great chapter
+Finally, let’s take a look at how to extract images from a PDF file:
+# Extract images 
+with pymupdf.open("sample_data/sample_data.pdf") as doc:
+ for page in doc:
+   # Get images from the page
+   image_list = page.get_images()
+   for img_idx, img in enumerate(image_list):
+     # Extract image data
+     xref = img[0]
+     base_image = doc.extract_image(xref)
+     image_bytes = base_image["image"]
+     # Display the image directly in Jupyter notebook
+     display(Image(data=image_bytes))
+     # Save image
+     img_fmt = base_image["ext"]
+     img_filename = f"img_{page.number}_{img_idx}.{img_fmt}"
+     with open(image_filename, "wb") as img_file:
+         img_file.write(image_bytes)
+34 
+| 
+Chapter 2: The Base RAG Stack
+Extracting an image from a PDF file is a little bit complicated as images are consid‐
+ered “external” information. The get_images() function does not actually get the
+binary representations of images, but, instead, the “pointer” info of images. It is
+the extract_image() function that actually gets the image data using the reference
+number (xref) associated with the image. The code example above both displays the
+image in a Jupyter notebook setting and saves it to a file in the native format of the
+image contained in the PDF file.
+Working with DOCX
+Unlike the PDF, DOCX is a structured format that retains the metadata of elements in
+a document. This makes it easier to extract text, tables, and images. A DOCX file is
+essentially a ZIP archive (also called a ZIP ball) of XML files that store texts and tables
+and media files, including images.
+First, let’s extract the text and tables using python-docx, a library that is good at
+handling texts and tables in DOCX-format files:
+#!pip install python-docx
+from docx import Document
+from IPython.display import display, Image
+document = Document('sample_data/sample_data.docx')
+# extract text 
+for para in document.paragraphs:
+  print(para.text)
+# extract tables
+for table in document.tables:
+  print("\n--- Table ---")
+  for row in table.rows:
+    row_text = [cell.text for cell in row.cells]
+    print(row_text)
+Then we can move on to extract images from DOCX files. As mentioned above, a
+DOCX file is actually a ZIP archive containing XML files and media files. Those
+media files can be accessed using the zipfile module. In the following code, we
+will search for image files using their common suffixes/extensions: .jpg, .jpeg, .png,
+and .gif:
+import zipfile
+zipf = zipfile.ZipFile('sample_data/sample_data.docx')
+filelist = zipf.namelist()
+for fname in filelist:
+  _, ext = os.path.splitext(fname)
+  if ext in ['.jpg', '.jpeg', '.png', '.gif']:
+    # read image and display in Jupyter
+Document Parsing 
+| 
+35
+    with zipf.open(fname) as img_file:
+        img_data = img_file.read()
+        display(Image(data=img_data))
+Now we have covered how to extract all three major modalities, texts, tables, and
+images, from the DOCX format.
+Parsing PDF files using an LLM
+From the examples above, you might notice that parsing files can be quite complex.
+For example, in the PyMuPDF example, we had to manually filter out table contents
+from all text to get unstructured text. LLMs are powerful tools that can make this
+process easier in many cases. Now let’s see how to use GPT-5.1 to parse a PDF file to
+get unstructured text and tables, respectively, with just a few English instructions.
+Set the environment variable OPENAI_API_KEY to your OpenAI API
+key.
+First, initiate an OpenAI client and load the PDF file:
+from openai import OpenAI
+client = OpenAI()
+file = client.files.create(
+    file=open("sample_data/sample_data.pdf", "rb"),
+    purpose="user_data"
+)
+Then ask GPT-5.1 to extract the text, except those in tables and images:
+completion = client.chat.completions.create(
+    model="gpt-5.1",
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "file",
+                    "file": {
+                        "file_id": file.id,
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": """Extract the text content from the file. Exclude 
+                    texts from tables or images.""",
+                },
+36 
+| 
+Chapter 2: The Base RAG Stack
+            ]
+        }
+    ]
+)
+print(completion.choices[0].message.content)
+The message to GPT-5.1 has two parts: the first part is the file to be parsed, and the
+second part contains the instructions. The instructions, in plain English, specify to
+extract text content from the file while excluding texts from tables or images.
+Next, let’s extract tables from the same PDF file:
+completion = client.chat.completions.create(
+    model="gpt-5.1",
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "file",
+                    "file": {
+                        "file_id": file.id,
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": """Extract the tables from the file. Return in 
+                    Markdown tables.""",
+                },
+            ]
+        }
+    ]
+)
+print(completion.choices[0].message.content)
+This snippet is similar to the previous one, except that the instruction now asks
+GPT-5.1 to extract tables and return them in Markdown format.
+In this section, we explored the fundamentals of how to prepare data for retrieval
+and LLMs. We showed examples of extracting texts from PDF and DOCX files, two
+of the most common document formats, using two popular libraries, PyMuPDF and
+python-docx. Next, we will move on to the next step in the pipeline: text chunking.
+Text Chunking
+Chunking is the process of breaking down a big string of text, such as the full text of
+a document, into smaller parts called “chunks.” For example, we might break a long
+article into individual paragraphs or sections, or even into sentences.
+Text Chunking 
+| 
+37
+Why do we need chunking? The primary reason for chunking is the finite nature of
+the LLM context window. Here are the context windows of the state-of-the-art LLMs
+at the time of writing:
+• OpenAI’s GPT-5.1: 400k
+•
+• Anthropic’s Claude Sonnet 4.5: 1M
+•
+• Google’s Gemini 3: 1M
+•
+The numbers may sound big, but they represent a deceptive abundance when applied
+to enterprise-grade tasks. A normal person speaks about 120 words per minute.
+Because an English word is about 1.3 tokens, a 400k context window is enough for
+about 42 hours of continuous speech. That might sound like a lot, but if, for example,
+you want to get a consensus of the market about a certain topic based on transcripts
+of all relevant earnings calls, 42 hours is simply not enough.
+Chunking helps to maximize the amount of relevant information that can be packed
+into the context window. Through chunking, we can fill the context window with as
+much relevant information as possible, allowing the LLM to generate a response with
+a complete picture.
+In the earning call example above, where the context window is not long enough to
+accommodate all earnings call transcripts, if you only care about the growth of head
+counts in top 10 players in an industry, then only the chunks related to that topic will
+be included in the context window. Chunks about other topics, such as revenue or
+technological breakthroughs, will be excluded.
+Beyond the strict capacity constraints of the context window, there is a compelling
+performance argument for chunking: computational overhead and inference latency.
+Nvidia’s NIM LLMs benchmark examined the time to first token (TTFT) for different
+context window lengths of Llama 3.3 70B using 2× H100 GPUs at FP8 precision.
+Table 2-3 shows the result:
+Table 2-3. Latency as a function of sequence length in Llama 3.3
+Number of tokens Latency
+200 tokens
+31 ms
+500 tokens
+47 ms
+1000 tokens
+82 ms
+5000 tokens
+406 ms
+10000 tokens
+1833 ms
+It is roughly estimated that the inference time of a transformer-based LLM scales
+quadratically with the context length. It would be reasonable to project that when we
+approach hundreds of thousands of tokens (if the GPU RAM can still support that
+38 
+| 
+Chapter 2: The Base RAG Stack
+many tokens), the TTFT will lead to an unacceptably bad user experience. Also note
+that the experiments above used 2x H100s, which are a very luxurious configuration.
+At the time of writing, a single-H100 instance (p5.4xlarge) on AWS costs $6.88/hour
+or $5,022/month on-demand. AWS does not offer duo-H100 configurations. Should
+AWS offer it, the cost to achieve the latencies above is over $10k/month, nearly half of
+an engineer’s base salary in Silicon Valley—quite pricey. Reducing the context length
+by chunking can significantly reduce the inference latency and cost.
+The second rationale for chunking is also related to the context window, but this
+time it is the context window of embedding models. Embedding models are used to
+convert text chunks into vectors for storage in a vector database and for fast, semantic
+retrieval. However, their context windows are much smaller than those of LLMs.
+As we will see in the section “Selection Criteria for Embedding Models” on page
+45, state-of-the-art embedding models have a small context window. For example,
+OpenAI’s third- and fourth-generation embedding models text-embedding-3-{small,
+large} have a context window of 8k, as does Gemini’s second-generation embedding
+model, gemini-embedding-002. So in the case of OpenAI and Google, we must limit
+the chunk size to 8k tokens.
+The third reason for chunking is to improve the response quality of RAG. The
+improvement is at both the retrieval and generation stages. If a large chunk covers
+multiple topics, the embedding vector of the large chunk reflects each of the topics
+weakly. If we break the large chunk into smaller chunks, each smaller chunk will
+focus on one topic and, thus, its embedding will better represent that topic. At the
+retrieval stage, this means you get higher-relevance chunks, and at the generation
+stage, smaller chunks mean less irrelevant information is presented to the LLM,
+leading to more accurate responses. It is widely acknowledged that the reasoning
+ability of LLMs degrades as the context length increases. For example, a plot from
+Anthropic’s 1M context general availability announcement shows that LLMs from
+three providers all degrade their retrieval abilities as the context increases. With
+smaller chunks, the LLM can focus on the most relevant information without being
+distracted by irrelevant details.
+In summary, you can see why chunking is a necessary step for RAG. Let’s now see the
+various chunking strategies common in RAG.
+Chunking Strategies
+Multiple chunking strategies have been proposed for RAG pipelines.
+Fixed-size chunking is the most basic strategy, splitting documents into chunks of
+a predefined size, typically measured in characters, words, or tokens. Its primary
+limitation is that it disregards the natural structure of the text, potentially splitting
+sentences or semantic units. A common mitigation is to introduce overlapping
+Text Chunking 
+| 
+39
+chunks, where tokens at the end of one chunk are repeated at the beginning of the
+next, preserving local context across boundaries.
+Content-aware chunking leverages linguistic and syntactic cues—such as sentence
+boundaries and line breaks—to produce more coherent and contextually meaningful
+segments. Several variants exist:
+Sentence- or paragraph-based splitting
+This approach segments text into paragraphs using line breaks (e.g., “\n\n”)
+or into sentences using sentence boundary detection rules (e.g., punctuation).
+Sentence segmentation is challenging due to numerous edge cases (e.g., abbrevia‐
+tions where periods do not denote sentence boundaries). Specialized tools—com‐
+monly referred to as sentencizers or sentence segmenters—are provided by natural
+language processing (NLP) libraries such as spaCy, Stanza, and NLTK (Natural
+Language Toolkit). Each resulting unit can serve as a chunk. If single-sentence
+chunks are too granular, consecutive sentences may be merged, with optional
+overlap between chunks to preserve context.
+Recursive chunking
+This approach uses a hierarchy of delimiters to progressively split text into
+smaller units (e.g., paragraphs → sentences → clauses). A representative imple‐
+mentation is LangChain’s RecursiveCharacterTextSplitter.
+Document-structure chunking
+This method extends recursive chunking by incorporating explicit document
+structure, such as sections and subsections. For example, a Markdown document
+can be segmented hierarchically based on heading levels (e.g., # → ## → ###),
+preserving the logical organization of the content.
+Semantic chunking
+Semantic chunking further advances this paradigm by segmenting text based on
+semantic similarity, for example by clustering sentences according to topic. This
+approach produces chunks that are semantically coherent, rather than relying
+solely on surface-level structure.
+A comparison between the chunking strategies is given in Table 2-4.
+Table 2-4. A comparison between chunking strategies
+Method
+Pros
+Cons
+Fixed-size
+chunking
+Simple to implement; predictable chunk size;
+efficient for indexing and batching
+Breaks semantic and syntactic structure; may split
+sentences; requires overlap to preserve context (adds
+redundancy)
+Sentence/
+paragraph-based
+(content-aware)
+Preserves linguistic structure; more coherent
+chunks; easy to implement with NLP tools
+Sentence boundary detection can be error-prone; chunk
+sizes become uneven; may still miss higher-level context
+40 
+| 
+Chapter 2: The Base RAG Stack
+Method
+Pros
+Cons
+Recursive
+chunking
+Flexible; adapts to multiple levels of
+structure; avoids overly large or small chunks
+More complex to implement/tune; depends on delimiter
+quality; may still ignore true semantics
+Document-
+structure
+chunking
+Aligns with logical document organization
+(sections, headings); preserves hierarchical
+context
+Requires well-structured documents; less effective on
+unstructured text; implementation depends on format
+(e.g., Markdown, HTML)
+Semantic
+chunking
+Produces semantically coherent chunks;
+better retrieval quality; aligns with
+embedding-based search
+Computationally expensive; requires embeddings/
+clustering; less predictable chunk size; harder to debug/
+tune
+How do we decide which chunking strategy to use? It’s hard to have one rule that
+works best for all cases. A common practice is to evaluate based on your dataset.
+Chroma offers an example that you can refer to when deciding which chunking
+strategy to use.
+Chunking effectiveness can be evaluated at either the retrieval or generation stage.
+Retrieval is usually evaluated on retrieval benchmarks such as BEIR and in metrics
+such as precision, recall, F1, nDCG (normalized discounted cumulative gain), and
+MRR (mean reciprocal rank). Chapter 6 will discuss more about evaluation. Gener‐
+ation is usually evaluated on benchmarks that involve finding answers from given
+context/passages, such as those for question answering (QA) or machine reading
+comprehension (MRC), and in metrics like BERTScore or LLM-based judgment.
+Please note that the evaluation of LLM generation can be affected by the ranking of
+chunks because LLMs tend to pay more attention to those at the beginning and the
+end; this is known as the “lost in the middle” effect. So do not conclude that one
+chunking strategy is better than another solely based on generation evaluation. Keep
+in mind that the LLM generation can be impacted by many factors.
+Somewhat surprisingly, you may find that all chunking strategies result in similar
+performance and there is no one chunking strategy that gives you better performance
+than all others. A recent work published at EMNLP (the Conference on Empirical
+Methods in Natural Language Processing) 2024 , “Is Semantic Chunking Worth the
+Computational Cost?” by Renyi Qu and Forrest Bao (one of the authors of the book)
+at Vectara and Ruixuan Tu at the University of Wisconsin-Madison, shows that fixed-
+size chunking and semantic chunking make no difference on BEIR and RAGBench,
+two industry-renowned benchmarks for evaluating the retrieval task. But readers
+should not take our conclusion in this paper as definitive—existing benchmarks
+were created in the pre-RAG time, and, thus, usually contain short passages, and the
+impact of chunking may be more pronounced in longer texts. With more and more
+modern, RAG-specific benchmarks that contain long passages, we may see different
+conclusions in the future.
+Text Chunking 
+| 
+41
+Code Example: Chunking in Python
+SpaCy is a popular preprocessing library for natural language processing tasks. Its
+sentencizer splits text into sentences. The following code splits a long text (variable
+text) into sentences (which are the chunks in this case), and iteratively prints them
+out:
+import spacy
+# Load a pre-trained English model
+nlp = spacy.load("en_core_web_sm")
+text = """Mr. Wang is a teacher. He teaches A.I. (?). Does he love his work? 
+Of course!"""
+doc = nlp(text)
+# Iterate over sentences
+for sent in doc.sents:
+  print(sent.text)
+The output will be
+Mr. Wang is a teacher.
+He teaches A.I. (?).
+Does he love his work?
+Of course!
+One advantage of using spaCy’s sentencizer over splitting sentences using punctua‐
+tion is that it can better handle edge cases, such as abbreviations or titles that contain
+periods. In our example above, the question mark in the middle of a sentence fails to
+fool spaCy.
+We can also use Python’s native string operations to create a fixed-length chunker.
+# Fixed-length chunking with overlap
+chunk_size = 30
+chunk_overlap = 8
+step_size = chunk_size - chunk_overlap
+for i in range(0, len(text), step_size):
+   chunk = text[i:i+chunk_size]
+   print(chunk)
+The output is
+Mr. Wang is a teacher. He teac
+ He teaches A.I. (?). Does he 
+Does he love his work? Of cour
+Of course!
+In this extreme example, each chunk has a length of 30 characters and two consecu‐
+tive chunks have an overlap of 8 characters. From the output, it is obvious that fixed-
+length chunking breaks words, creating noise for embedding. However, if chunks are
+42 
+| 
+Chapter 2: The Base RAG Stack
+long enough, the impact of such noises is small. In such a case, fixed-length chunking
+is a good option for its speed.
+Embedding Models
+Imagine you want to find all the information about the United States from your
+documents. An initial approach is to find all chunks that contain the words “United
+States.” However, this approach can miss out chunks containing phrases like “the
+U.S.” or “America,” which refer to the same entity but use different wording. A more
+obvious example would be trying to find the word “two” with the number “2.”
+The challenge we see in the paragraph above is due to a fundamental characteristic of
+human languages: surface (dis)similarity is not aligned with semantic (dis)similarity.
+The spelling of a word is the surface form of a concept. Two words of similar
+surface forms, e.g., “hat” and “mat,” are not necessarily semantically similar or do
+not necessarily refer to the same or similar concepts. The misalignment between
+surface (dis)similarity and semantic (dis)similarity has long been a thorny problem of
+artificial intelligence and, more specifically, natural language processing.
+This is where embedding models come into play. They can help capture the semantic
+meaning of phrases, allowing for more flexible and accurate retrieval of information.
+In the example above, an embedding model could recognize that “the U.S.” and
+“America” are related to “United States,” despite their different surface forms.
+What Is (an) Embedding?
+The process of embedding maps textual data (either a retrieved chunk or the query
+from the user in the context of RAG) to a vector of floating point numbers, also known
+as the embedding vector or simply the embedding. These vectors capture the semantic
+meaning of the text, allowing for effective comparison and retrieval that simple key‐
+word matching cannot achieve. Two semantically similar phrases (e.g., “Uncle Sam”
+and “US Government”) will have a small distance between their embedding vectors
+despite quite different spelling. The vector distance can be computed efficiently using
+operations like the dot product, which today’s GPUs are optimized for.
+Embedding solves a bottleneck that has troubled NLP for years: capturing the seman‐
+tic similarity over surface dissimilarity (e.g., “Uncle Sam” versus “US Government”)
+and the semantic dissimilarity over surface similarity (e.g., “cat” versus “hat”). If the
+query contains “Uncle Sam” and we purely rely on the surface form of words, then we
+will miss out chunks containing the phrase “US Government” and may even prefer
+chunks that contain “Uncle Tom” or “Uncle Bob,” which are semantically irrelevant.
+The purpose of embedding is to find a way to represent textual data such that
+the similarity in representation aligns with the semantic similarity. Because such
+embeddings are usually obtained by training a neural network, such representations
+Embedding Models 
+| 
+43
+2 Jeffrey L. Elman, “Finding Structure in Time,” Cognitive Science 14, no. 2 (1990): 179–211, https://doi.org/
+10.1016/0364-0213(90)90002-E.
+3 Tomas Mikolov, et al., “Distributed Representations of Words and Phrases and Their Compositionality,”
+Advances in Neural Information Processing Systems 26 (Proceedings of the NeurIPS, 2013).
+4 Precisely speaking, it is not words being embedded but tokens. To more precisely capture the meanings,
+modern approaches sometimes break words into subword tokens, e.g., “geopolitical” into “geo” and “political.”
+are often called the dense representation and a retriever based on these embeddings is
+sometimes referred to as a dense retriever.
+Please do not let the example of “Uncle Sam” versus “US Govern‐
+ment” give you the wrong impression that embedding is only for
+matching synonyms, i.e., words of the same meaning. For example,
+if the query is “Find all cases that happened in the US” and your
+data source only mentions state names like California or Alberta
+(which is a Canadian province), with the right embeddings, the
+model could still retrieve cases in California while ignoring those
+in Alberta.
+Representing words as vectors has been a long-standing problem in natural language
+processing. For example, what’s referred to as the Elman network2 was described in
+the 1990s by Jeffrey L. Elman in “Finding Structure in Time,” which is an influential
+work about recurrent neural networks (RNNs). The Elman network used one-hot
+encoding to represent words. In one-hot encoding, each word is represented as a
+vector of a length equal to the size of the vocabulary, with all elements set to zero
+except for a single element corresponding to the word’s index in the vocabulary,
+which is set to one.
+The real breakthrough came with the advent of deep learning in the 2010s. In 2013,
+Google researcher Tomas Mikolov introduced the Word2Vec3 model, which maps
+a word to a vector through a simple task of predicting surrounding words given a
+target word, known as theskip-gram model. For example, given the middle word
+“pizza” in the sentence “I had pizza for lunch”, it predicts the words “I”, “had”, “for”,
+and “lunch.”
+The result was exciting. Famously, the vector difference between “queen” and
+“woman” was shown to be nearly parallel to that between “king” and “man.”
+Such embeddings are called “static embeddings”—“static” in the sense that every
+word’s embedding is fixed after training. In 2018, the introduction of the BERT
+(Bidirectional Encoder Representations from Transformers) model by Google further
+advanced the field by enabling “contextualized embeddings” or “dynamic embed‐
+dings,” which determine the embedding of a word4 based on its context.
+44 
+| 
+Chapter 2: The Base RAG Stack
+5 This short course is with DeepLearning.AI and taught by one of the authors of this book.
+This short course5 is a good resource to learn more about the internals of embedding
+models, including the difference between word and sentence embeddings, and how to
+build and train dual encoder models using contrastive loss.
+Selection Criteria for Embedding Models
+Like any machine learning model, the first trade-off you have to make when selecting
+an embedding model is the model size and its performance. A larger model can
+characterize the semantics better but may also be slower and require more memory.
+You can find a balance by using a benchmark.
+The Massive Text Embedding Benchmark (MTEB) is an industry benchmark for
+evaluating the performance of embedding models. You can find rankings of embed‐
+ding models at the MTEB Leaderboard.
+Embedding dimensions are another important factor to consider when selecting
+an embedding model. Higher-dimensional embeddings can capture more nuanced
+semantic information, but they also require more computational resources. It’s essen‐
+tial to find a balance between dimensionality and efficiency based on the specific use
+case.
+Many embedding models, such as OpenAI’s embedders and Google Gemini’s embed‐
+ders, allow you to adjust the dimensionality of the embeddings by simply truncating
+the embedding vector to any dimension. This is achieved during the training pro‐
+cess of the embedder using a technique called Matryoshka Representation Learning
+(MRL) that pushes the most discriminative semantic information to the lower dimen‐
+sions by designing the loss function as the sum of losses of the embedding at different
+dimensions. While MRL allows for truncation at any point, it is standard practice to
+utilize power-of-two subdimensions (such as 1/8, 1/4, or 1/2 of the full vector). This
+is because the model is usually optimized at these specific dimensional granularities
+during the training process.
+Like LLMs, which have context windows, embedding models also have limitations
+on the input size they can handle. The context window of representative embedding
+models, at the time of writing, is as follows (in terms of number of tokens):
+• Alibaba’s Qwen3-Embedding-{0.6B, 4B, 8B}: 32k
+•
+• OpenAI’s third generation, text-embedding-3-{small, large}: 8k
+•
+• Google Gemini’s second generation, gemini-embedding-002: 8k
+•
+• Beijing Academy of Artificial Intelligence (BAAI)’s BGE-M3: 1k
+•
+Embedding Models 
+| 
+45
+Practical Tips and Considerations
+Be sure that your chunking strategy matches the embedding model’s context window
+length. If your chunks are longer than the model’s context window, most serving
+frameworks, such as HuggingFace’s Transformers library, will silently truncate the
+chunks, causing information loss and degraded retrieval.
+Also, be sure that your embedding dimensions meet the requirements of your vector
+DB (to be discussed in this chapter, in “Vector Databases” on page 51). For example,
+pgvector caps the dimension for 32-bit, full-precision floatpoint embeddings at 2,000.
+To save storage and computation, a common practice is to lower the precision of your
+embeddings, e.g., to 16-bit floats or even 8-bit integers. Many serving frameworks or
+software-as-a service (SaaS) endpoints allow you to specify the precision you want for
+the returning embeddings.
+Embedding endpoints typically return vectors in JSON format, which is notoriously
+inefficient for numerical data. A single 8-bit integer like “123” requires only 1
+byte in binary but consumes 3 bytes as a JSON string. Furthermore, transmitting
+floats via JSON risks precision loss during string serialization. To solve this, many
+platforms support Base64 encoding; while this preserves full floating-point precision
+and reduces payload size, it requires a decoding step on the client side to restore the
+original float array.
+Code Example: Generating Embeddings with Sentence Transformers
+Sentence Transformers is an architecture for producing effective sentence embed‐
+dings, and its Python package sentence-transformers provides many pre-trained
+embedding models. Let’s use it to demonstrate how embeddings work.
+First, let’s import the libraries and initialize the model:
+from sentence-transformers import SentenceTransformer
+import random 
+import matplotlib.pyplot as plt
+# Load the pre-trained Sentence Transformers model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+Then, let’s embed some sample sentences:
+# List of sentences to encode
+sentences = [
+    "I am a happy person.",
+    "I am a joyful person.",
+    "I am a pessimistic person.",
+    "I am not an optimistic person."
+]
+46 
+| 
+Chapter 2: The Base RAG Stack
+# Generate embeddings for the sentences
+embeddings = model.encode(sentences)
+We can take a sneak peek at the embeddings.
+print (embeddings.shape)
+print (embeddings[:, :5]) # only the first 5 dimensions due to space constraints
+The first print() shall output (4, 384), indicating that we have four sentences,
+each with 384-dimensional embeddings. The second print() will show the first five
+dimensions of each embedding like this:
+[[ 0.0046472   0.06651063  0.01479136 -0.02955691 -0.03556161]
+ [ 0.03454593  0.05649192  0.00730661 -0.07299504 -0.06663913]
+ [ 0.0615203   0.05317358  0.01788338  0.0348283  -0.03031245]
+ [ 0.02471697  0.02527617 -0.00175561  0.02087232 -0.03713483]]
+Now we can compute the pairwise similarity between the sentence embeddings.
+similarity_matrix = model.similarity(embeddings, embeddings)
+print (similarity_matrix)
+We see a 4 × 4 tensor as follows:
+tensor([[1.0000, 0.8151, 0.3864, 0.5210],
+        [0.8151, 1.0000, 0.3383, 0.4128],
+        [0.3864, 0.3383, 1.0000, 0.7047],
+        [0.5210, 0.4128, 0.7047, 1.0000]])
+Let’s visualize the matrix as a heatmap:
+plt.figure(figsize=(5, 5))
+plt.imshow(
+    similarity_matrix, cmap='RdYlGn_r', interpolation='nearest', vmin=0, vmax=1
+)
+plt.title('Cosine similarity between any pair of embeddings')
+plt.xlabel('Sentence ID')
+plt.ylabel('Sentence ID')
+plt.yticks([0, 1, 2, 3])
+# Add text annotations
+for i in range(len(similarity_matrix)):
+    for j in range(len(similarity_matrix)):
+        plt.text(j, i, f'{similarity_matrix[i][j]:.3f}', 
+                ha='center', va='center', color='black')
+plt.show()
+The resulting heatmap is shown in Figure 2-3.
+Embedding Models 
+| 
+47
+Figure 2-3. Cosine similarity between embeddings of sentences used in the coding exam‐
+ple above
+The diagonal elements represent the similarity of each sentence with itself, which
+is always 1. The first row represents the similarity of the first sentence with all
+sentences. Its similarity with the second sentence is 0.8151, which is quite high,
+indicating that the two sentences are semantically similar. Its similarity with the third
+and fourth sentences are 0.3864 and 0.5210, respectively, indicating lower semantic
+similarity. Moving our attention to the last two rows of the similarity tensor, we can
+see that the third sentence is most similar to the fourth sentence, with a similarity
+score of 0.7047, while its similarity with the first and second sentences are 0.3864 and
+0.3383, respectively, which is quite low.
+Now, let’s do an interesting experiment. What if we randomly take a slice of the
+embeddings and compute their similarities? Here is the code:
+# generate two random integers between 0 and 384
+rand1 = random.randint(0, 384)
+rand2 = random.randint(0, 384)
+if rand1 > rand2:
+    rand1, rand2 = rand2, rand1
+print (f"Using semantic dimensions {rand1} to {rand2}")
+similarity_matrix = model.similarity(
+    embeddings[:, rand1:rand2], embeddings[:, rand1:rand2]
+48 
+| 
+Chapter 2: The Base RAG Stack
+)
+print (similarity_matrix)
+At one run, you’ll see this output:
+Using semantic dimensions 67 to 158
+tensor([[1.0000, 0.8511, 0.3949, 0.5848],
+        [0.8511, 1.0000, 0.3353, 0.4720],
+        [0.3949, 0.3353, 1.0000, 0.6721],
+        [0.5848, 0.4720, 0.6721, 1.0000]])
+By using the embeddings between semantic dimensions 67 and 158, we can see that
+the similarity matrix exhibits a similar pattern to the one obtained using the full
+embeddings: that is, sentences 1 and 2 are still the most similar, followed by sentences
+3 and 4.
+If you repeat the process with different random dimensions, you will likely observe
+similar patterns in the similarity matrices. This indicates today’s embedding models
+are so good that even a randomly selected subspace of the embedding space can still
+capture meaningful semantic relationships.
+Vector Databases and Vector Search
+Converting text into embeddings is only the first step toward the effective retrieval
+of information. The next step is to store these embeddings in a way that allows quick
+similarity lookups. This is where vector databases come into play.
+Understanding Vector-Based Similarity Search
+In the previous section, we learned that the beauty of embedding is that the vector
+difference between two embeddings reflects the semantic similarity between the two
+pieces of text that the embeddings represent. A common approach to measure vector
+similarity is the dot product. The higher the dot product, the more semantically
+similar the two vectors and their corresponding texts are. Note that when using
+dot products to compare semantic similarities, we can remove the influence of vec‐
+tor magnitude to purely consider the angular difference between two embeddings.
+Hence, the embeddings need to be normalized, i.e., the magnitude is 1. When vectors
+are normalized, their dot product equals another concept, called cosine similarity.
+Given the embedding of a query, a naive but brute-force approach to find chunks
+that are most relevant to the query would be to compute the dot product between
+the query embedding and all other embedding vectors in the database. Thus, the
+complexity is O(n), where n is the number of vectors in the database.
+When your data is small, the brute force approach can work fine. Your setup can be as
+simple as storing all pre-ingested vectors in the RAM. But, for a large-scale production
+deployment of millions or even billions of chunks, we need some approach smarter
+Vector Databases and Vector Search 
+| 
+49
+6 Yu A. Malkov and D. A. Yashunin, “Efficient and Robust Approximate Nearest Neighbor Search Using
+Hierarchical Navigable Small World Graphs,” IEEE Transactions on Pattern Analysis and Machine Intelligence
+42, no. 4 (April 2020): 824–836, https://doi.org/10.1109/TPAMI.2018.2889473.
+than brute force. The good news is that we do not need to compute the dot products
+with all vectors in the database, if we are willing to tolerate small errors. This is the idea
+of approximate nearest neighbor (ANN) search. In contrast, the brute force approach is
+also sometimes called exact nearest neighbors (ENN) or FlatIndex search.
+Approximate Nearest Neighbor Algorithms
+To speed up the vector search, nearly all vector databases or vector search plug-ins in
+traditional relational database management systems (RDBMSs) or NoSQL databases
+offer some form of ANN algorithm. The word “approximate” in ANN means that the
+algorithm does not guarantee to find the exact nearest neighbor, but rather a close
+enough one.
+The most prominent ANN algorithm is called Hierarchical Navigable Small World
+(HNSW).
+6 HNSW builds a multi-layer structure in which each vector is connected to
+nearby vectors within the same layer. Upper layers contain a small number of vectors
+and represent coarse views of the dataset, while lower layers contain more vectors and
+enable finer detail. Querying begins at the top and moves downward, always trying to
+reach vectors that are closer to the query at each level.
+If you are interested in the algorithmic details of HNSW, you can read the original
+paper, or read this HNSW tutorial with code implementation that can visualize the
+construction of and search on an HNSW network.
+To make this intuitive, imagine trying to find the nearest US city to a given coor‐
+dinate that is in Los Altos, California. The brute-force approach would calculate
+distances to every city in the country. HNSW instead proceeds in layers. At the top
+level—Tier 1—we evaluate the query against only two major landmark cities:
+• Los Angeles
+•
+• New York City
+•
+Whichever is closer gives us a strong hint about where to search next. Suppose the
+query is closer to Los Angeles. We then move to Tier 2 and compare the query against
+several large cities in the western United States:
+• Los Angeles itself
+•
+• San Francisco
+•
+• Seattle
+•
+• Denver
+•
+50 
+| 
+Chapter 2: The Base RAG Stack
+If San Francisco turns out to be closest, we zoom into Northern California. We then
+descend into Tier 3 and compare only cities within the Bay Area:
+• San Francisco itself
+•
+• Oakland
+•
+• San Jose
+•
+Suppose San Jose is the nearest at this level. We move further down to Tier 4, now
+evaluating individual South Bay cities such as the following:
+• Palo Alto
+•
+• Mountain View
+•
+• Sunnyvale
+•
+• San Jose itself
+•
+By the time we reach this lowest level, the candidate cities are extremely local, and
+we have located the nearest match by computing distances for only a handful of
+cities at each step rather than every city in the country. This progressively refined
+search—coarse first, fine later—is what makes HNSW so efficient in practice.
+To see an illustration of the HNSW, check out the first figure in the original HNSW
+paper.
+Because HNSW navigates greedily through the graph, it is still possible—though rare
+—for the search to be pulled into the “wrong” region if the starting decision happens
+to be slightly off, such as when the query lies right on the boundary between two
+major metropolitan areas. In such cases, HNSW may return a city that is extremely
+close to the true nearest city, but not the absolute mathematically closest one. This is
+the essence of the “approximate” in ANN.
+In exchange, HNSW delivers superb performance: it examines only a tiny fraction
+of the dataset while achieving accuracy that is, in most practical applications, nearly
+identical to exact search—but at a fraction of the computational cost.
+A famous open source library that implements the HNSW algorithm is Meta/Face‐
+book’s Facebook AI Similarity Search (FAISS) library. FAISS provides a highly opti‐
+mized implementation of HNSW and other ANN algorithms, making it easier for
+developers to integrate ANN search capabilities into their applications.
+Vector Databases
+A vector database is a system built to manage, store, and query high-dimensional
+embeddings, and primarily implement a scalable form of ANN. However, vector
+databases go beyond just searching for similar vectors, and handle broader database
+concerns: persistence, updates, deletes, metadata management, filtering, scalability,
+and integration with other systems.
+Historically, specialized vector databases emerged before mainstream databases
+offered strong vector indexing; today, many general-purpose databases also support
+Vector Databases and Vector Search 
+| 
+51
+vector search. For example, pgvector for PostgreSQL, sqlite-vec for SQLite, and Atlas
+Vector Search for MongoDB. So today, we cannot simply consider vector DBs as
+only performing vector search while traditional RDBMSs or NoSQL databases only
+perform nonvector search.
+Many vector DB systems, such as the proprietary Pinecone and open source Mil‐
+vus, Weaviate, and Qdrant, support metadata filtering, which is not performed on
+embeddings but on metadata associated with the embeddings, such as document
+IDs, timestamps, or other attributes. Metadata is just fields (similar to columns in
+a traditional RDBMS or NoSQL database), and, thus, metadata filtering performs a
+similar operation to traditional database filtering.
+Although metadata filtering is not performed on the vector embeddings themselves,
+it can have an impact on the speed and quality of vector search. For example, suppose
+you have the quarterly financial reports for all public companies over decades. If you
+want to ask questions about a specific company in a specific period of time, it’s better
+for the DB system to first narrow down the search space by filtering the data by both
+the company name and the time period before performing the vector search, which is
+far more expensive and slower than traditional filtering.
+The metadata filtering can be done before, in parallel with, and after the vector
+search. The example we described above is pre-filtering. There’s a good blog post
+from Pinecone that explains pre-filtering and post-filtering. Algorithms to jointly
+perform metadata filtering and vector search include ACORN.
+Parameters to Consider When Using Vector Search
+A key parameter in vector search within a RAG pipeline is the number of results to
+return, commonly denoted as k. The value of k cannot be too small nor too large: if
+k is too small, the real answer to the user query may be missed due to being ranked
+beyond k. If k is too large, we may face many issues: first, we may exceed the context
+window length of the LLM; then, we may introduce noise and irrelevant information
+to degrade the generation quality; and finally, we may unnecessarily increase the cost
+and latency of the generation step.
+Earlier we mentioned Matryoshka Representation Learning, which gives users the
+flexibility to choose arbitrary embedding dimensions. The reduced dimension will
+reduce the size of the vector database and speed up the vector search. However,
+reducing the dimension too much may degrade the quality of the vector search. The
+balance point depends on the specific use case and the embedding model used. Be
+mindful of the maximal embedding dimensions that your vector DB can support. For
+example, pgvector supports up to 2,000 dimensions for 32-bit, full-precision floats.
+52 
+| 
+Chapter 2: The Base RAG Stack
+Code Example: Storing and Retrieving Vectors Using pgvector
+Pgvector is an extension that adds vector search support to PostgreSQL. Here we
+show some key steps to using pgector. For the complete executable code, please refer
+to the Jupyter notebook pgvector-simple.ipynb in the GitHub repo of this book.
+First, let’s embed some sentences using Sentence Transformers:
+from typing import List
+from sentence-transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+model = SentenceTransformer('all-MiniLM-L6-v2')
+sample_sentences = [
+    "I am a happy person.",
+    "I am a joyful person.",
+    "I am a pessimistic person.",
+    "I am not an optimistic person."
+]
+embeddings = model.encode(sample_sentences)
+The embeddings are 2D NumPy ndarrays, where each row corresponds to the
+embedding of a sentence and each column corresponds to an embedding dimension.
+Then, let’s create a table called sentence_embeddings with two columns: sentence
+and embedding:
+import psycopg2
+import numpy as np
+# Connect to a PostgreSQL database
+conn = psycopg2.connect(
+    host="YOUR_HOST", port="YOUR_PORT",
+    database="YOUR_DB", user="YOUR USER"
+)
+conn.autocommit = True
+cursor = conn.cursor()
+# Enable pgvector extension
+cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+# Create a table to store sentences and their embeddings
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sentence_embeddings (
+        sentence TEXT,
+        embedding VECTOR(384)
+    )
+    """)
+# Create HNSW index in the table "sentence_embeddings" for efficient 
+similarity search
+cursor.execute("""
+    CREATE INDEX 
+    ON sentence_embeddings 
+    USING hnsw (embedding vector_l2_ops) 
+Vector Databases and Vector Search 
+| 
+53
+    WITH (m = 16, ef_construction = 64);
+""")
+The autocommit setting above saves the hassle of manually committing SQL com‐
+mands to the database. When creating the column embedding for storing vectors,
+we specified its dimension to be 384. This is because the embedding dimension of
+all-MiniLM-L6-v2 is 384. At the end of the code snippet above, we create an index
+in our table sentence_embeddings called hnsw that facilitates efficient search on this
+table.
+With the table sentence_embeddings ready, we can insert the precomputed embed‐
+dings into it. We will do it one embedding at a time using the SQL INSERT statement.
+Note that the variable embeddings we obtained earlier are 2D NumPy ndarrays.
+When inserting into a PostgreSQL (PG) table, each row needs to be converted into
+a list of floats and then serialized into a string for properly forming an INSERT
+statement as a string:
+# Insert sample sentences and their embeddings into the table 
+"sentence_embeddings" for sentence, embedding in zip(sentences, embeddings):
+    embedding_as_list: List[float] = embedding.tolist()
+    cursor.execute(
+        "INSERT INTO sentence_embeddings (text, embedding) "
+        "VALUES (%s, %s::vector)",
+        (sentence, embedding_as_list)
+    )
+Let’s take a sneak peek at the table:
+# Take a sneak peek at the table contents
+cursor.execute("SELECT text, embedding FROM sentence_embeddings;")
+rows = cursor.fetchall()
+for row in rows:
+    print(row[0], row[1][:3])
+If you see this truncated output, then you are in a good shape:
+I am a happy person. [0.00465,0.06651,0.01479]
+I am a joyful person. [0.03455,0.05649,0.00731]
+I am a pessimistic person. [0.06152,0.05317,0.01788]
+I am not an optimistic person. [0.02472,0.02528,-0.00176]
+Finally, let’s run the vector search. To allow searching again and again, we create a
+function:
+def vector_search(query, model, top_k):
+    query_embedding = model.encode([query])[0]
+    query_embedding_as_list: List[float] = query_embedding.tolist()
+    cursor.execute(
+            """
+            SELECT text, 
+                    1 - (embedding <=> %s::vector) as similarity
+            FROM sentence_embeddings
+54 
+| 
+Chapter 2: The Base RAG Stack
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s;
+            """,
+            (query_embedding_as_list, query_embedding_as_list, top_k)
+        )
+    results = cursor.fetchall()
+    for row in results:
+        print(row)
+The special notation ::vector tells PG to treat the field embedding as vectors. The
+operation <=> performs cosine similarity search—and since sentence-transformers
+yields normalized vectors, cosine similarity equals the dot product here. In the SQL
+SELECT statement above, embedding refers to the column embedding in the table
+sentence_embeddings.
+You may wonder why we use 1 - (embedding <=> %s::vector) as similarity. This
+is because in pgvector, the operation <=> actually measures the dissimilarity between
+two vectors. Hence, we have to use its complement to measure similarity.
+Finally, let’s put vector search into spin!
+query = "I am a smiling person."
+vector_search(query, model, 3)
+The print-out should be
+('I am a happy person.', 0.7639919010393534)
+('I am a joyful person.', 0.6934391466808068)
+('I am not an optimistic person.', 0.3835604305136333)
+As expected, there is a sharp drop in the similarity score from “happy” and “joyful” to
+“not an optimistic person”, meaning that “a happy person” and “a joyful person” share
+much higher semantic similarities with “a smiling person” than “not an optimistic
+person” does.
+Let’s try a different query:
+query = "I have a bad feeling about the future."
+vector_search(query, model, 3)
+The result follows… makes sense, right?
+('I am a pessimistic person.', 0.5613031721891864)
+('I am not an optimistic person.', 0.5059882553216297)
+('I am a happy person.', 0.3224700977626531)
+Generative LLMs
+We are now at the final step of the RAG stack: feeding the retrieved text chunks and
+the original user query into an LLM to generate a response.
+Generative LLMs 
+| 
+55
+This step is a text-to-text transform. Although in the previous vector search step
+we operate on numerical embedding vectors, we do not send the embeddings to the
+LLM. Instead, as shown previously in Figure 2-2, we send a full LLM prompt, which
+includes instructions and the original text chunks that correspond to the retrieved
+embeddings to the LLM, and the LLM responds with a textual response.
+LLMs
+LLMs are vital to RAG because of their ability to generate human-like text after
+analyzing and reasoning over the context. In RAG, the two most common tasks
+for LLMs are summarization—getting a coherent but concise rewriting of chunks
+retrieved, and question answering—generating an answer to the user query based on
+chunks retrieved. LLMs are a good tool for those purposes in that LLMs are trained
+to generate output text that is relevant to the input text according to a wide range of
+user intents. Summarization and question answering happen to be two of the most
+common user intents. A great amount of training data has been devoted to them, and
+LLM vendors have invested a great deal of effort in these functions.
+Using a neural network to produce output is called inference. Inference speed is
+usually a bottleneck in using LLMs, especially when your RAG system runs on-prem
+or in an air-gapped environment, and, thus, you must serve the LLM on your own.
+Many techniques have been developed to improve the inference speed. For example:
+• Quantization speeds up the LLM throughput by reducing the precision from
+•
+32-bit (float32) to 16-bit (e.g., using the float16 or bfloat16 representation), 8-bit
+(int8), or even 4-bit (int4).
+• FlashAttention is a popular method to accelerate inference of transformer-based
+•
+LLMs by making the memory usage more efficient when computing attention
+values.
+• Open source serving frameworks like vLLM and Ollama accelerate LLM
+•
+inference and reduce hardware footprints by implementing a combination of
+methods.
+What a beauty to see human ingenuity applied to squeezing out more performance
+from existing hardware!
+When picking LLMs, there is a trade-off between speed and quality. Generally, a
+larger LLM has more capacities than a smaller LLM and can produce better results on
+complex tasks. But quite often, the task is simple enough that a larger LLM performs
+only marginally better or is on par with a smaller LLM. In such a case, the latency and
+cost introduced by the larger LLM are hard to justify. It is worth the effort to create
+an evaluation set of data (see more in the section “Evaluating LLMs and Prompt
+56 
+| 
+Chapter 2: The Base RAG Stack
+Templates” on page 58 about the evaluation of LLM outputs) to find the sweet-spot
+LLM that satisfies your expectation at the minimal cost.
+Another factor to consider when picking LLMs is data privacy. Many RAG use cases
+require on-premises or air-gapped deployment, meaning that the data cannot go to
+the public Internet. In such cases, using proprietary LLMs, such as OpenAI’s GPT
+series or Anthropic’s Claude models, via public HTTP endpoints, is not allowed, and
+to most developers, open source LLMs are the only option. At the time of writing,
+the gap between open source and proprietary LLMs on common RAG tasks, such as
+summarization and question answering, is small enough, and the rule of thumb is
+that an open source LLM with more than 70B parameters is decent enough.
+RAG Prompt Engineering
+LLMs have a great power called instruction following. This means that they can be
+guided to perform specific tasks based on the instructions provided in the prompt.
+Prompt engineering is the practice of designing and refining these prompts to elicit
+the desired responses from the model.
+In the context of RAG, the retrieved results and the user query need to be assembled
+properly to guide the LLM in generating a relevant response. There is no absolute
+best way to do this, as it may depend on the specific use case and the LLM being used.
+Here, we just provide some examples to inspire our readers in developing prompt
+templates.
+Here is a straightforward prompt template:
+You are a helpful information-processing assistant. Extract answers related to a 
+search query based on the context provided.
+Here is the context: {retrieved_results}
+Here is the search query: {query}
+Remember earlier in the section “The Query Flow” on page 26, we mentioned rewrit‐
+ing the original user query to a retrieval query? Since now we are at the generation
+step, we can use the original user query here. This will help the LLM to generate a
+response that is more aligned with the user’s intent.
+However, most LLMs can perform better if the query is placed ahead of the context,
+due to their training data. Hence, a template like the following may be preferred:
+You are a helpful information-processing assistant. Extract answers related to a 
+search query based on the context provided.
+Here is the search query: {query: str}
+Here is the context: {retrieved_results: list[str]}
+Generative LLMs 
+| 
+57
+A modern LLM has the ability to perform complex reasoning to guide itself in
+reaching better answers. So you may want to add such instructions in the prompt
+to help the model leverage its reasoning capabilities. For example, you could add a
+simple chain-of-thought (CoT) instruction into the prompt:
+If the answer is not obviously present in the context, please think step by step 
+and provide a detailed explanation of your reasoning process.
+Because hallucination is a big concern, you may explicitly tell an LLM to adhere to
+the information in the context by adding an instruction like this into the prompt
+template:
+If an answer cannot be reasonably inferred from the context, please simply say 
+"I don't know." If you used any assumptions to arrive at your answer, please 
+clearly state what assumptions are made.
+So far, our prompt templates are very generic or task-agnostic. If you know the nature
+of the queries that users will ask, you can tailor the prompts to be more specific
+and effective. For example, if you know the task is question answering, your prompt
+template may be simplified:
+Answer the question {query: str}, 
+given the context {retrieved_results: list[str]}
+As another example, if you know that the user query is not a formal question but
+more like a search query to Google, then your prompt template can be tailored for
+summarization:
+You are a good summarizer. Please summarize the information about {query: str} 
+from the context below:
+ {retrieved_results: list[str]}. 
+Providing background information can potentially improve the LLM’s output. For
+example, if you know the domain of your RAG application is science or sports,
+you can begin your prompt by stating something like “you are an expert in science/
+sports.”
+The last piece of advice is that a common practice to help an LLM understand
+different parts in a prompt is to use XML tags to delineate them. For example, like
+this:
+You are a helpful information-processing assistant. Extract answers related to a 
+search query based on the context provided.
+<query>{query: str}</query>
+<context>{retrieved_results: list[str]}</context>
+Evaluating LLMs and Prompt Templates
+There are many LLMs on the market, and there are many ways to prompt them.
+A natural question to ask is this: how to pick the right LLM and a corresponding
+58 
+| 
+Chapter 2: The Base RAG Stack
+prompt template? Without going into the rabbit hole of RAG evaluation (which we
+discuss at some detail in Chapter 6), here, we briefly discuss some key steps.
+The first step is preparing evaluation queries that reflect or mimic the types of queries
+that users might send to the RAG system.
+If you have a large number of existing user queries, fantastic. Otherwise, synthesize
+the queries by prompting an LLM with your knowledge of the data, user behavior,
+and other information about the potential RAG system.
+The next step is to build “critics” for evaluating the responses from RAG. A common
+practice is called LLM-as-a-judge. Once again, we leverage the instruction-following
+capability of LLMs to configure them into evaluators that judge different aspects of
+the responses. There are usually two common aspects:
+• Relevance—does the response answer the query?
+•
+• Faithfulness—is the response well-supported by the retrieved documents?
+•
+Note that we can use the same LLM for both generation and evaluation. Thanks
+to LLMs’ instruction-following capability, one LLM can be configured to perform
+different tasks.
+LLM-as-a-judge has several drawbacks. First, it may be slow and expensive because it
+uses expensive LLMs. Second, it may not always be accurate. LLMs can hallucinate,
+e.g., the reasoning from one step to another may be flawed, so the LLM’s judgment
+may be flawed, too. Third, it may not be consistent. The same LLM may give different
+judgments at different times.
+An alternative to LLM-as-a-judge is dedicated natural language generation (NLG)
+evaluation models, which are generally much smaller than LLMs. Fine-tuned to eval‐
+uate specific aspects of LLM generation, these models are much faster, cheaper, and
+more robust than LLM-as-a-judge. For example, Vectara’s HHEM, whose co-authors
+include authors of this book, is a time-tested model to judge faithfulness. It was
+downloaded more than 5 million times between August 2024 (when it debuted) and
+August 2025. Galileo’s Luna is another hallucination-judging model.
+The last, but golden, form of evaluation is human evaluation. Human evaluators can
+provide the most accurate and nuanced assessments of LLM responses, taking into
+account context, intent, and subtlety that automated systems may miss. However,
+human evaluation is also the most resource-intensive and time-consuming method.
+It is often used as a final, small-scale check after automated evaluations have been
+performed.
+To evaluate LLMs and prompt templates, simply send the evaluation queries to the
+RAG system and collect the responses. Then, use the established critics to assess
+the quality of the responses. If your evaluation criteria are multifaceted, consider
+Generative LLMs 
+| 
+59
+using a weighted scoring system to account for different aspects of response quality.
+Finally, just pick the combination of LLM and prompt template that yields the best
+performance according to your evaluation criteria.
+Code Example: Using Anthropic Claude to Generate Responses in RAG
+The Jupyter notebook generative_LLMs.ipynb provides a straightforward demo of
+using LLMs and prompt templates to generate responses based on user queries and
+context.
+We use the actual text of the section “Evaluating LLMs and Prompt Templates” on
+page 58 as the context, and present three queries to Anthropic’s Claude Sonnet 4.5:
+1. “If I don’t care about budget or time, what’s the most accurate way to judge the
+1.
+RAG system?”
+2. “What are the common aspects that people judge the RAG system on?”
+2.
+3. “How many ways are there to evaluate the RAG system? Just method names.”
+3.
+The prompt template is similar to those we went over in “RAG Prompt Engineering”
+on page 57:
+You are a good reader. Answer the query based on the context provided. Give me a 
+short answer. 
+Query: {query}
+Context: {context}
+Given a query and context, we make the request to Anthropic’s Claude Sonnet 4.5
+via its Python API:
+import anthropic
+response = anthropic.Anthropic().messages.create(
+    model="claude-sonnet-4-5",
+    messages=[
+        {"role": "user", 
+        "content": prompt_template.format(query=query, context=context)}
+    ]
+)
+print (response.content[0].text)
+For the first query, the response is
+**Human evaluation** is the most accurate way to judge a RAG system when budget 
+and time aren't constraints. The context explicitly states that "human 
+evaluators can provide the most accurate and nuanced assessments of LLM 
+responses, taking into account context, intent, and subtlety that automated 
+systems may miss" and describes it as the "golden evaluation."
+60 
+| 
+Chapter 2: The Base RAG Stack
+For the second query, the response is
+Based on the context, people commonly judge RAG systems on two main aspects:
+    1. **Relevance** - whether the response actually answers the query
+    2. **Faithfulness** - whether the response is well supported by the 
+       retrieved documents
+These evaluations can be performed using LLM-as-a-judge, dedicated NLG 
+evaluation models, or human evaluation.
+For the third query, the response is
+Based on the context, there are **3 ways** to evaluate RAG systems:
+     1. **LLM-as-a-judge**
+     2. **NLG evaluation models**
+     3. **Human evaluation**
+In all three test queries, the responses provided by Anthropic’s Claude Sonnet 4.5 are
+both relevant and faithful to the context. It shows that our simple prompt template is
+effective.
+Conclusion
+This chapter unpacked the foundational elements that make a RAG system work in
+practice. From parsing messy, real-world documents to chunking them for efficiency;
+from converting text into meaningful embeddings to storing those embeddings in
+vector databases; from performing fast approximate search to prompting an LLM
+to reason over retrieved evidence—we explored how these steps form a coherent
+pipeline that turns static data into dynamic, query-driven intelligence.
+However, as we move from theory to implementation, several critical realities emerge:
+The ingestion bottleneck
+Errors introduced during ingestion—such as poor OCR or lost formatting—
+propagate downstream and cannot be reliably corrected during retrieval or gen‐
+eration.
+The nuance of chunking
+Default or naive chunking strategies are rarely sufficient for production; they
+must be validated through rigorous retrieval evaluation to ensure context is
+preserved.
+Retrieval limitations
+Even with high-quality embeddings, retrieval can fail due to redundancy, noise,
+or scope mismatch. This motivates the need for hybrid search and filtered
+retrieval methods, which we will explore in Chapter 3.
+Conclusion 
+| 
+61
+Although each layer may seem modular, their interactions are where a RAG system
+truly succeeds or fails. Effective retrieval depends on thoughtful chunking. High-
+quality generation depends on accurate retrieval. Index design affects latency and
+cost. Embedding model choice influences relevance. No component operates in iso‐
+lation, and improving a RAG system often requires examining these connections
+end-to-end.
+The concepts and code examples here serve as the essential toolkit for building
+production-grade RAG applications. In the next chapter, we will build on this
+foundation and explore how to enhance the base stack with advanced techniques:
+hybrid search, reranking, and architectural upgrades that make RAG systems robust,
+scalable, and capable of handling complex real-world workloads.
+62 
+| 
+Chapter 2: The Base RAG Stack
+CHAPTER 3
+Scaling Your RAG Stack
+In Chapter 2, you saw the basic components of a RAG stack: document parsing,
+chunking, embedding models, and vector search, as well as using an LLM for the
+final generation of the response to the user. With this knowledge, you should now be
+able to build end-to-end RAG applications that work pretty well on small to medium
+datasets, and experience for yourself how RAG works in practice.
+In this chapter, we tackle more advanced techniques that help you bring your RAG
+stack to enterprise scale, without sacrificing latency or response quality, including
+data ingestion, advanced retrieval techniques, guardrails, and handling RAG hallu‐
+cinations. Although not strictly part of scale, security and data privacy become
+important as you scale in production, and we cover those in Chapter 4 under “Data
+Security and Privacy”.
+We end this chapter with a less commonly discussed but critical aspect of any RAG
+application: building a great user experience to make sure your frontend is as good as
+your backend.
+RAG at Scale
+When your RAG application grows in scale, things can become more complex
+relatively quickly. You had to deal with higher volumes of documents and queries,
+multiple document formats, integrating advanced retrieval mechanisms to maintain
+high-quality responses, hallucination mitigation, guardrails, and a lot more.
+In this section, we’ll dive into the various challenges that come up with RAG at scale
+and how to address them.
+63

@@ -181,7 +181,7 @@ services:
       LANGFUSE_INIT_PROJECT_NAME: Production RAG
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-dev
       LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-dev
-      LANGFUSE_INIT_USER_EMAIL: dev@local
+      LANGFUSE_INIT_USER_EMAIL: dev@example.com
       LANGFUSE_INIT_USER_NAME: Dev
       LANGFUSE_INIT_USER_PASSWORD: dev-password
 

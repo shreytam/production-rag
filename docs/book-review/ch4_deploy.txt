@@ -1,0 +1,1114 @@
+1 You might find the book Practical MLOps by Noah Gift and Alfredo Deza (O’Reilly) useful for a deep dive on
+MLOps.
+integration patterns that are simply too vast and environment-specific to capture
+in this chapter.
+Much of the “heavy lifting” required to move RAG into production involves standard,
+rigorous software engineering and DevOps practices rather than RAG-specific logic.
+Concepts such as high availability, load balancing, containerization (Docker/Kuber‐
+netes), secrets management, and CI/CD pipelines are universal requirements for any
+mission-critical enterprise application.1
+Therefore, this chapter focuses primarily on system design, architecture, and strategy,
+as well as how to transition from a POC to production.
+Challenges with RAG in Production
+A scalable, production-grade RAG stack is more difficult to construct than it first
+appears. There are many hurdles, including response quality, latency, security, sup‐
+port, and cost.
+Response Quality and Reduced Hallucinations
+Whether you are using RAG to build an AI assistant or an application for question
+answering or automated RFP (request for proposal) responses, or any other use case,
+the quality of the response from your RAG pipeline is often the most important
+feature to focus on.
+Users tend to disengage from an application they cannot trust, so if many of the
+responses are inaccurate or include hallucinations, user trust in this application
+dramatically reduces, rendering it essentially unusable.
+It’s important to understand the various factors that may result in low-quality respon‐
+ses, so that you can identify the cause and address it.
+Reason 1: No relevant data
+Imagine a RAG pipeline that is grounded in information from user manuals about
+Samsung TVs. If the user asks a question about a specific Samsung TV model, but the
+user manual for that model is not included in the data, then clearly the system has no
+information to ground its response in.
+Here’s another example: consider an investment bank building a RAG pipeline groun‐
+ded in two specific datasets:
+106 
+| 
+Chapter 4: Deploying RAG to Production
+• All public Securities and Exchange Commission (SEC) filings (like 10-Ks)
+•
+• The bank’s own internal research reports.
+•
+An analyst might ask a complex, comparative question, such as, “What is the primary
+revenue-driver risk mentioned in our internal research for Nvidia, and how does it
+compare to the risk profile of SambaNova Systems?”
+The system is perfectly equipped to answer the first half of the query, as it has access
+to the proprietary reports on Nvidia. However, SambaNova is a private entity (at
+least at the time we are writing this book), and thus has no public filings, and if the
+investment bank has never covered it internally, the RAG system’s knowledge base
+contains zero relevant data about its risk profile.
+In both examples, what often occurs is that the retrieval pipeline will come up with
+some retrieved facts, but those will not be relevant, and the LLM will use those
+irrelevant facts to generate a response anyway, which might be incorrect.
+By tracking user queries and response quality, you can identify this kind of issue,
+and update your RAG dataset to include all the necessary information to respond
+accurately to any user query.
+When you identify missing data, your instinct will be to simply rerun your ingestion
+script to update the vector database. This is fine for a POC, but in production use,
+appropriate care must be taken. A bug in your ingestion script (like broken character
+encoding or malformed metadata) could “pollute” your live index, degrading results
+for everyone. A typical pattern is a “staging verification workflow,” whereby you
+maintain a separate “staging collection” (which can be a smaller subset or a full clone
+of the production index). New data is first ingested into staging, then an automated
+suite of retrieval unit tests queries the staging collection to verify that the new
+documents are retrievable and formatted correctly. Only after these tests pass is the
+data “promoted” and ingested into the live production index.
+Beyond just finding missing files, this is where partnering with subject matter experts
+(SMEs) is vital. In many cases, only a domain expert can determine whether a
+document is truly the “source of truth” or an outdated version that should be purged
+to ensure the RAG system doesn’t ground itself in obsolete information.
+Reason 2: Weak retrieval pipeline
+Assuming we do have the right information in the dataset, the next culprit is often the
+quality of your retrieval pipeline. Most POCs start with a simple vector search (aka
+semantic search) approach, using a vector database.
+As you scale to production, the number of documents that are available grows,
+making the task of accurate retrieval much more difficult since there are a lot more
+potential matches for any given query, requiring more sophisticated filtering and
+Challenges with RAG in Production 
+| 
+107
+ranking mechanisms. Furthermore, as the dataset grows in size, the indexing used by
+vector and keyword search mechanisms becomes larger and more complex, demand‐
+ing efficient algorithms to update and search it quickly.
+Often, you need additional capabilities, such as hybrid search or various types of
+rerankers (as discussed in Chapter 3) to achieve a high-quality retrieval pipeline.
+This often translates into distributed storage and requires mechanisms to ensure
+consistency, fault tolerance, and efficient data retrieval, all of which add layers of
+complexity.
+The bottom line is this: RAG is “garbage-in-garbage-out.” If you don’t invest enough
+in a strong retrieval pipeline as you scale to production, the facts provided to the
+LLM will not be as accurate as in your POC, and the quality of responses will
+degrade.
+Reason 3: LLM hallucinations
+Even with perfect retrieval, LLMs often struggle to faithfully incorporate the provided
+evidence or facts in the source documents (or chunks) into the final response, result‐
+ing in hallucinations.
+One complicating factor is the variability and potential incompleteness of the
+retrieved facts. In many cases, the documents returned by the retrieval component
+may not cover the full scope of information required to answer the query, leading the
+generative model to fill in gaps with inferred information. This gap-filling behavior
+can inadvertently result in hallucinations, and detecting these inaccuracies is further
+complicated by the fact that the generated text may be partially supported by the
+retrieved data, creating a “spectrum of factuality” rather than a clear binary between
+true and false.
+As you consider your production RAG application, you need to choose an LLM
+that has a low rate of hallucinations, as well as consider implementing advanced
+techniques to detect and correct hallucinations in your RAG pipeline (as we discussed
+in Chapter 3).
+This adds significant additional research and development effort, well beyond what’s
+required for a POC.
+Reason 4: Prompt engineering
+The basic prompt for RAG can appear quite simple, as you saw in Chapter 1. But
+engineering a better prompt for your RAG system can have a significant positive
+impact on the quality of responses.
+For example, your basic prompt may be
+prompt = """
+Use the following pieces of context to answer the question at the end.
+108 
+| 
+Chapter 4: Deploying RAG to Production
+{context}
+Question: {question}
+Helpful Answer:"""
+A common improved prompt may look like this:
+prompt = """
+Use the following pieces of context to answer the question at the end. If you 
+don't know the answer, just say that you don't know; don't try to make up an 
+answer. 
+{context}
+Question: {question}
+Helpful Answer:"""
+Providing specific instructions to the LLM, such as shown here in “If you don’t know
+the answer, just say that you don’t know; don’t try to make up an answer,” can be a
+powerful way to improve response quality, especially as your production RAG covers
+a lot more documents and edge cases that a more basic prompt may not cover.
+Careful prompt design is thus crucial for curbing low-quality responses, as well as
+providing better defenses against prompt injection attacks, and requires significant
+testing across a multitude of queries.
+High Latency
+Enterprise RAG systems must reconcile the computational load of semantic search,
+hybrid search, reranking, generative LLMs, and any other component in your RAG
+pipeline with user expectations of a quick response time.
+A good goal for the retrieval components—semantic search, hybrid search, and
+reranking—is no more than 300 ms on average, whereas for a generative LLM,
+latency is often measured in the 2–3 seconds range for smaller models and up to even
+5–10 seconds for the top frontier LLMs, with “reasoning” models going even higher.
+If you include hallucination detection or correction, that can add additional latency.
+During prototyping, it’s common to prioritize functionality over speed, and as you
+move to a production deployment, the application needs to adhere to more stringent
+latency thresholds comparable to those of the publicly available ChatGPT, often in the
+range of a few seconds end-to-end.
+The amount of data during the POC is usually a small fraction of the size of data in
+production, and that growth in scale can easily result in much higher latency since all
+the components are under a much higher load:
+• The vector database has to be properly indexed to maintain low-latency
+•
+responses.
+• The hybrid search must be optimized for handling more data without a signifi‐
+•
+cant increase in latency.
+Challenges with RAG in Production 
+| 
+109
+• The reranker may need to process more candidates.
+•
+• The number of chunks provided to the generative LLM may need to be higher to
+•
+maintain accuracy.
+What’s more, you may find that you need to replace some components used during
+the POC with different components in production to avoid higher latency. For exam‐
+ple, the vector DB you used in the POC may have kept all data in memory, and, of
+course, in production, that needs to scale up, and the vector database you chose may
+not perform as well at that larger scale.
+It’s important to mention that you need to not only keep the average latency within
+acceptable bounds, but also control tail latencies (e.g., the 95th percentile) that can
+degrade the overall user experience, especially under complex or resource-intensive
+queries.
+In order to mitigate high latency, you will need to consider a variety of techniques,
+including parallelization and auto-scaling, using alternative LLMs, software or hard‐
+ware acceleration, efficient data indexing, and caching.
+Parallelization and auto-scaling
+Parallelizing the end-to-end query flow with auto-scaling (so that your RAG pipeline
+efficiently handles low or high query volume without significant impact to latency)
+requires careful system design.
+A common design pattern is a set of decoupled microservices, with a stateless
+orchestrator service acting as the central “brain.” This orchestrator, a lightweight
+CPU-bound API server, receives the user’s query and manages the end-to-end flow.
+After first calling an embedding service, the orchestrator “fans out” multiple requests
+simultaneously—for example, it queries the vector database and a keyword-based
+lexical search service at the exact same time.
+This parallel fan-out/gather pattern ensures the retrieval latency is dictated by the
+slowest data source, not the sum of all of them. Once all candidate chunks are
+gathered, the orchestrator sends them to a dedicated reranker service, and finally,
+passes the optimized context to the LLM generation service.
+This decoupled design is the key to auto-scaling: each service (the CPU-bound
+orchestrator, the input/output (I/O)-bound vector DB, and the expensive GPU-
+bound LLM service) is managed as its own group of replicas and can scale up or
+down independently based on its specific resource bottleneck, such as CPU utiliza‐
+tion, in-flight GPU requests, or database connections.
+110 
+| 
+Chapter 4: Deploying RAG to Production
+Using alternative LLMs
+It is not uncommon to have the exact same LLM in production as you use in the
+POC, especially if you want to maintain the same performance characteristics in
+terms of response quality. However, if you used a frontier large-scale LLM in the
+POC—perhaps since it was easy and available—you may find that you can benefit
+from trying smaller/faster LLMs in production if latency is an issue and you need to
+reduce it.
+If you need to use a different LLM in production, this can, of course, have signifi‐
+cant implications on response quality, so you need to test your RAG pipeline very
+carefully, and perform RAG evaluation (see Chapter 6) to ensure that there is no
+degradation in quality.
+Software or hardware acceleration
+Within a decoupled microservice architecture, you can dedicate specific hardware
+and software optimizations to each pod to maximize its performance, assuming your
+pipeline actually performs those functions and is not calling an external API service.
+For example, your embedding, reranker, and LLM pods can see significant perfor‐
+mance gains with powerful GPUs such as Nvidia A100s or H100s. More impor‐
+tantly, you can serve any of these models using an optimized inference server like
+vLLM, TensorRT-LLM, or Text Generation Inference (TGI). This software layer is
+non-negotiable, as it implements critical techniques like continuous batching (to effi‐
+ciently handle concurrent generation requests from your many parallel orchestrator
+pods) and paged attention (to slash memory overhead for the long contexts typical in
+RAG).
+Efficient data indexing
+If you use a locally hosted vector database, a prerequisite for low latency is to
+implement an approximate nearest neighbor (ANN) index like HNSW (discussed in
+Chapters 2 and 3) or Inverted File Product Quantization (IVFPQ).
+Similarly, for your lexical search, implement proper sharding with your Elasticsearch
+or OpenSearch indices and use appropriate text analyzers so that keyword lookups
+are fast. A well-designed index is what allows your retrieval pods to respond in
+milliseconds, making your orchestrator’s fan-out strategy viable.
+Caching
+Caching—implemented as a high-speed, in-memory key–value store (like Redis or
+Dragonfly)—can sit “in front of” your various microservices, and help in reducing
+overall latency. Caching can be implemented in the following components:
+Challenges with RAG in Production 
+| 
+111
+Full response cache 
+The orchestrator first hashes the raw user query. If this key exists, it returns
+the stored, final LLM-generated answer immediately, bypassing your entire RAG
+pipeline. This is highly effective for common, identical questions.
+Retrieval cache 
+The orchestrator hashes the query embedding. It then checks if the results of the
+retrieval step (i.e., the list of chunks) are cached. If so, it skips the entire retrieval
+steps and just returns those results.
+Chunk cache
+After retrieving the chunk IDs, the orchestrator can check a cache for the actual
+text content of those chunks, saving a call to a potentially slow document store
+(like S3 or Postgres).
+In a RAG application where the input is often a natural language query, it can be
+beneficial to implement semantic caching, where a similarity search is performed
+against stored cache keys rather than requiring an exact string match. Because end
+users rarely phrase the same question identically twice (e.g., “How do I reset my
+password?” versus “I need to change my password”), a traditional hash-based cache
+often fails to register a hit. In a semantic cache, the incoming query is embedded into
+a vector, and the system searches the cache for previous queries that are semantically
+close (above a certain similarity threshold). If a match is found, the system returns
+the cached response associated with that similar query, significantly increasing cache
+hit rates for natural language inputs.
+By strategically caching at these layers, you can bypass the most expensive parts of
+your system. However, the central challenge is cache invalidation, which, if not handled
+properly, may introduce incorrect responses, especially in environments where data is
+changing rapidly. Rather than relying only on a simple time-to-live (TTL) mechanism,
+a more robust solution is to have your data ingestion pipeline publish events (e.g., to a
+Redis Pub/Sub channel or Kafka topic) whenever a document is added or updated. A
+subscriber service can then actively purge any of the cache entries associated with that
+document, ensuring your RAG system never serves stale data.
+As always, robust and continuous monitoring helps identify latency bottlenecks in
+real time as well as more systemic latency issues, and correct them.
+Let’s demonstrate the idea of caching of retrieval with a simple example using Lang‐
+Chain (full example code is available on GitHub). Here we use Redis (although
+Dragonfly or KeyDB are good alternatives) for semantic caching.
+import numpy as np
+from langchain_core.documents import Document
+class SemanticCachedRetriever(BaseRetriever):
+    """
+112 
+| 
+Chapter 4: Deploying RAG to Production
+    A retriever that uses embedding similarity for semantic caching.
+    Similar queries can hit the cache even if worded differently.
+    """
+    _base_retriever: any = PrivateAttr()
+    _embeddings: any = PrivateAttr()
+    _similarity_threshold: float = PrivateAttr(default=0.85)
+    _cache_embeddings: List[np.ndarray] = PrivateAttr(default_factory=list)
+    _cache_results: List[List[Document]] = PrivateAttr(default_factory=list)
+    _cache_queries: List[str] = PrivateAttr(default_factory=list)
+    
+    def __init__(
+        self, 
+        base_retriever, 
+        embeddings,
+        similarity_threshold: float = 0.85,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self._base_retriever = base_retriever
+        self._embeddings = embeddings
+        self._similarity_threshold = similarity_threshold
+        self._cache_embeddings = []
+        self._cache_results = []
+        self._cache_queries = []
+    
+    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+        """Compute cosine similarity between two vectors."""
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    
+    def _find_similar_cached(
+        self, query_embedding: np.ndarray
+    ) -> Optional[Tuple[List[Document], str, float]]:
+        """Find cached results for a semantically similar query."""
+        best_similarity = 0.0
+        best_match = None
+        best_query = None
+        
+        for i, cached_emb in enumerate(self._cache_embeddings):
+            similarity = self._cosine_similarity(query_embedding, cached_emb)
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = self._cache_results[i]
+                best_query = self._cache_queries[i]
+        
+        if best_similarity >= self._similarity_threshold:
+            return best_match, best_query, best_similarity
+        return None
+    
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        # Compute embedding for the query
+        query_embedding = np.array(self._embeddings.embed_query(query))
+        
+Challenges with RAG in Production 
+| 
+113
+        # Check for semantically similar cached query
+        cache_hit = self._find_similar_cached(query_embedding)
+        if cache_hit:
+            docs, original_query, similarity = cache_hit
+            print(f"Semantic Cache Hit! (similarity: {similarity:.3f})")
+            print(f"  Matched query: \"{original_query}\"")
+            return docs
+        
+        # Cache miss - perform retrieval
+        print("Semantic Cache Miss. Performing vector search...")
+        results = self._base_retriever.invoke(query)
+        
+        # Store in cache
+        self._cache_embeddings.append(query_embedding)
+        self._cache_results.append(results)
+        self._cache_queries.append(query)
+        
+        return results
+    
+    def clear_cache(self):
+        """Clear the semantic cache."""
+        self._cache_embeddings = []
+        self._cache_results = []
+        self._cache_queries = []
+As you can see, this works by leveraging semantic similarity: instead of hashing the
+query, we convert it into a vector embedding and compare it against previously cached
+query vectors using cosine similarity. If a past query is found to be sufficiently similar
+(exceeding the defined threshold, which we chose to be 0.85), we return the stored
+results immediately. If not, we proceed with the standard retrieval and store the new
+query, its embedding, and the results in the local memory cache for future use.
+However, while exact match or semantic caching is simple to implement in a POC,
+caching becomes significantly more complex at production scale. You will need to
+address three primary challenges:
+Cache invalidation
+When new documents are ingested or old ones updated, the cached retrieval
+results based on the old data may become stale. Since you control ingestion, you
+can use a trigger-based approach that invalidates any response that is based on
+documents that are updated.
+Eviction strategy 
+As your cache grows, it will eventually consume all available RAM in the
+machine. To address this, you can configure an eviction policy (typically least
+recently used, or LRU) so the cache knows which old retrieved results to delete to
+make room for new ones.
+114 
+| 
+Chapter 4: Deploying RAG to Production
+2 This is a brand name of acetaminophen, or paracetamol.
+Horizontal scaling 
+A single Redis instance may not be enough to handle the throughput or memory
+requirements of an enterprise workload. In this case, you can utilize clustering
+(sharding), where the data is automatically split across multiple machines based
+on the hash of the key, allowing the cache to scale horizontally.
+Redis LangCache is designed exactly for this purpose, and turnkey RAG platforms
+often implement these strategies as part of their stack.
+Data Security and Privacy
+Production RAG deployments must implement defense-in-depth strategies across
+three critical attack surfaces: ingestion layer, vector and lexical databases, and the
+generation step. Let’s dig into each of these a bit more.
+Ingestion layer security
+Like any ETL (extract, transform, load) pipeline, your ingestion flow needs to use
+standard encryption protocols to ensure safety during data movement from the data
+sources to your RAG pipeline. Furthermore, your implementation needs to ensure
+the same security protocols are implemented throughout your RAG pipeline and
+in every component—document extraction, specialized table and image processing,
+chunking, embedding, and storage in the vector database, lexical datastore, or even
+graph database (if you use it, see Chapter 9).
+If your data includes personally identifiable information (PII) or protected health
+information (PHI), you need to consider your redaction strategy, while making sure
+redaction won’t result in reduced response quality due to loss of information.
+Common methods include masking, which replaces data with generic placeholders
+(e.g., “Ofer Mendelevitch” becomes “XXXX”), or nulling, which removes the data
+entirely. The primary problem with these approaches is that they cause significant
+information loss; the system doesn’t just lose the value (like the name “Ofer Menede‐
+levitch”), it loses the contextual relationship that value had with the surrounding
+text. For example, redacting a medical record from “Dr. Smith prescribed Tylenol2
+to Forrest” to “XXXX prescribed YYYY to ZZZZ” makes the sentence less usable for
+answering questions about prescriptions.
+To address this, a more advanced strategy is entity-aware redaction (or typed mask‐
+ing), which replaces the sensitive data with its category (e.g., “[DOCTOR_NAME]
+prescribed [MEDICATION] to [PATIENT_NAME]”). This method preserves the
+semantic structure and relationships in the data, allowing the RAG model to
+Challenges with RAG in Production 
+| 
+115
+understand what is happening (a doctor prescribing a medicine) without exposing
+the specific, private details, thereby balancing security needs with response quality.
+Here is an example: we use the presidio_analyzer and presidio_anonymizer libraries
+from Microsoft to perform entity-aware redaction. The AnalyzerEngine class can iden‐
+tify specific types of entities like a phone number or person, and the AnonymizerEngine
+can then replace them with a “token” like <PERSON> or <PHONE_NUMBER>.
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import OperatorConfig
+def entity_aware_redaction(text):
+    """
+    Implements the 'Typed Masking' strategy.
+    Replaces sensitive data with its category (e.g., [PERSON])
+    """
+    analyzer = AnalyzerEngine()
+    anonymizer = AnonymizerEngine()
+    # 1. Detect PII entities
+    results = analyzer.analyze(
+        text=text, entities=["PERSON", "PHONE_NUMBER"], language='en'
+    )
+    # 2. Replace with entity type (preserving semantic structure)
+    anonymized_result = anonymizer.anonymize(
+        text=text,
+        analyzer_results=results,
+        operators={
+            "PERSON": OperatorConfig("replace", {"new_value": "<PERSON>"}),
+            "PHONE_NUMBER": OperatorConfig(
+                "replace", {"new_value": "<PHONE_NUMBER>"}
+            ),
+        }you e
+    )
+    
+    return anonymized_result.text
+input = "Dr. Bao called 123-555-1122."
+output = entity_aware_redaction(input)
+print(output)
+And the output is
+Dr. <PERSON> called <PHONE_NUMBER>.
+If you need to comply with the International Standards Organization/International
+Electrotechnical Commission (ISO/IEC) 27001 standards for information prove‐
+nance, then you need to be able to prove that your data’s history is trustworthy and
+hasn’t been secretly altered. Hash-based tracking is the common approach here: it
+creates a unique “digital fingerprint” (a hash) for your data at every step in your RAG
+116 
+| 
+Chapter 4: Deploying RAG to Production
+pipeline, providing a verifiable chain of evidence that an auditor can use to confirm
+its integrity.
+Data store safeguards
+In a RAG pipeline, the vector DB serves as the repository for both the vector embed‐
+dings and their associated textual data. With hybrid search, a separate text database
+that is optimized for lexical search is also included in the implementation. And if you
+are implementing knowledge graphs (see Chapter 9), add to that a graph database.
+In all cases, the core requirement here is both encryption (in place and in
+transit) as well as role-based access controls (RBACs), to comply with your com‐
+pany’s security policy or to enforce the EU’s General Data Protection Regulation
+(GDPR)’s “minimum necessary” principle (storing only the essential data required for
+your application’s functionality, regularly reviewing and purging unnecessary data,
+and implementing privacy-by-design principles to minimize exposure of sensitive
+information).
+As with any secure enterprise system, you need to implement—for all of these data
+stores—network security best practices as well as continuous monitoring and inci‐
+dent response protocols.
+Preventing data leaks
+Your RAG data store includes all the data that should be available to drive RAG
+queries. It includes a diverse array of documents and data, each subject to different
+permission levels within your organization. For example, some documents may be
+accessible to all employees, while others remain confidential and are only visible to
+senior management, such as the CEO or to the HR department.
+A common approach to avoid potential data leaks that are permission-related is
+to integrate a permission-based filtering mechanism into the query flow. This filter
+leverages the company’s RBAC policies to ensure that only data authorized for the
+querying user is passed to the generative LLM. By doing so, you prevent unauthor‐
+ized access and mitigate the risk of exposing confidential information. This is an
+effective approach, although it requires a consistent role-based permissions strategy
+across all data that is being ingested into your RAG pipeline.
+Regardless of how you implement this type of permissions-based defense, regular
+audits of the query flow, thorough testing of filtering mechanisms, and continuous
+monitoring of external interactions are critical measures to detect and prevent data
+leaks.
+In addition to internal access controls, a common privacy concern is data leakage to
+LLM providers. Specifically, when interacting with LLMs hosted by outside vendors
+(such as OpenAI, Anthropic, or Google), the call to the LLM results in sending the
+Challenges with RAG in Production 
+| 
+117
+internal data over the network to an externally hosted LLM to produce the generative
+response. This introduces risk that sensitive data may inadvertently be stored in a way
+that you did not intend. External LLM providers might log these queries or retain
+temporary caches of the input data, potentially leading to data leakage. Such exposure
+could occur even if the data is anonymized, as patterns or metadata might still reveal
+sensitive insights.
+This often leads enterprise RAG applications with highly sensitive data to require on-
+premises deployment models, utilizing open source LLMs such as OpenAI’s gpt-oss,
+Meta’s Llama 4, Qwen, or DeepSeek, which can be hosted within your data center or
+virtual private cloud (VPC) without any potential risk to your data.
+LLM generation guardrails
+The generative LLM is responsible for producing the final output by combining
+retrieved data with the user’s query. To align with company policies and regulatory
+requirements, your RAG application must incorporate robust protections that pre‐
+vent the generation of disallowed content.
+These safeguards (often called guardrails, which we introduced in Chapter 1, and
+discussed in more detail in Chapter 3 in “Implementing Guardrails” on page 83)
+address issues such as hate speech, biased language, or any other forms of harmful or
+inappropriate output.
+When moving from a POC to production, these types of guardrails become a strict
+requirement, and making them work at scale often requires not just careful imple‐
+mentation but also comprehensive logging and monitoring to track the performance
+of the RAG pipeline, identify potential violations, and facilitate rapid response in the
+event of an incident.
+In production, allowing end users to report problematic outputs is a simple yet effec‐
+tive strategy to catch these types of issues early, enabling continuous refinement of the
+system’s safety and compliance measures. By integrating these defense strategies into
+your RAG application, you not only enhance the quality and safety of the generated
+responses but also reinforce the overall integrity and trustworthiness of your system
+in an enterprise setting.
+118 
+| 
+Chapter 4: Deploying RAG to Production
+Vendor Chaos and Integration Woes
+Building a production-grade RAG stack involves more than just assembling a vector
+database, an embedding model, and a generative LLM. As your stack evolves, you
+may need to integrate additional components to maintain high-quality responses and
+robust performance.
+These components may include the following:
+Content extraction
+External APIs for extracting text from PDF files, Word documents, or Power‐
+Point files. If you implement advanced chunking approaches, additional content
+transformations may be required.
+Data parsing 
+APIs dedicated to parsing tables and images with high accuracy and in different
+languages.
+Advanced retrieval
+Enhanced retrieval algorithms, such as hybrid search and reranking.
+Response quality assurance
+Models for detecting and correcting hallucinations.
+Security and compliance
+Components for encryption, data governance, role-based access controls, and PII
+redaction.
+Knowledge graphs 
+A graph DB and specialized graph preparation flows if you integrate knowledge
+graphs or GraphRAG (see Chapter 9).
+This “build-it-yourself” approach often results in a fragmented and brittle architec‐
+ture, where you are responsible for integrating and maintaining every connection.
+Not only do you have to procure and onboard each of these systems or services,
+you need to integrate all of them within your RAG stack, and make sure they
+work harmoniously together, maintaining high uptime and low latency. Additionally,
+integrating them into your systems monitoring infrastructure and security processes
+is critical to identify vulnerabilities early and maintain overall system integrity.
+To help assess the complexity incurred by integrating a new component or subsystem,
+Table 4-1 provides a quick checklist you can use (your specific enterprise require‐
+ments may mandate additional questions).
+Challenges with RAG in Production 
+| 
+119
+Table 4-1. Complexity assessment checklist
+Area of evaluation
+Key questions to ask vendor
+API & integration
+Does your service provide a stable REST API, a gRPC endpoint, or a client software development kit
+(SDK) (e.g., Python, Java)?
+What are the API rate limits? Is batch processing supported?
+Which authentication methods are supported (e.g., simple API key, OAuth 2.0)?
+Data & formats
+What specific data formats are accepted (e.g., JSON, multipart/form-data)?
+What is the output format? Does this output feed directly into the next component, or does it require a
+custom transformation layer?
+Security &
+compliance
+How is data encrypted in transit and at rest?
+How do you deal with PII?
+Does the provider meet the compliance requirements that your organization is required to meet (e.g.,
+System and Organization Controls type 2 [SOC 2], HIPAA, GDPR)?
+What vulnerability detection process do you have?
+Performance & scale
+What is your guaranteed P95/P99 latency?
+How does the subsystem deal with scaling (e.g., auto-scaling, horizontal scaling)?
+What is their uptime guarantee (provided in a service-level agreement, or SLA)? What are the
+penalties for failure?
+Monitoring &
+logging
+Is there a monitoring dashboard?
+Can it integrate with your existing observability tools?
+Support &
+maintenance
+What are the support channels (e.g., email, dedicated Slack channel, phone)?
+What is the guaranteed response time for a critical production issue?
+How are updates and new versions managed?
+Support in particular can be unexpectedly complex. Consider, for example, what
+happens when a bug is detected, latency rises above accepted thresholds, or response
+quality suddenly drops. You may find yourself working with multiple vendors, each
+with their own support staff and support SLA, leaving you to be the coordinator
+between all these parties.
+This is one of the areas where a more turnkey solution is extremely beneficial. Having
+a single point of accountability when something goes wrong can prevent endless
+headaches. An integrated platform bundles these components into a single, unified
+system, simplifying the architecture and accountability.
+Team and Expertise
+Another important challenge is building a team that can not only implement the
+initial RAG application, but also support and upgrade it over time, making the
+necessary changes to support additional enterprise use cases.
+If your RAG journey starts with a single use case, it is to be expected that with success
+will come increased demand for additional use cases. In fact, some large financial
+institutions have identified as many as four hundred generative AI use cases, and
+although this is not the same for every organization, we believe that most mature
+120 
+| 
+Chapter 4: Deploying RAG to Production
+enterprises will be able to identify at least 30 use cases of generative AI that provide
+significant value to their business operations in the first two years of using RAG.
+RAG systems sit at the intersection of machine learning, software engineering, and
+domain-specific knowledge, necessitating teams with diverse competencies.
+The primary challenge lies in assembling professionals who can bridge gaps between
+the following skillset buckets:
+Machine learning engineering
+Expertise in using embedding and reranking models correctly, using LLM infer‐
+ence with the right GPUs to balance cost and latency, prompt engineering, imple‐
+menting hybrid search techniques, optimizing retrieval pipelines, and specialized
+knowledge in hallucination detection and correction.
+If you integrate knowledge graphs in your RAG pipeline, then another whole set
+of expertise is required for building them, including graph query languages (see
+Chapter 9).
+Data engineering
+Proficiency in building scalable and highly available ETL pipelines capable of
+handling efficient ingestion of unstructured data from diverse data sources (PDF
+files, databases, websites, documentation, SharePoint, Jira, etc.), including pro‐
+cessing such data, normalizing it, and making it ready for RAG.
+DevOps/MLOps
+Skills in containerization, continuous integration and continuous delivery (CI/
+CD), orchestration, GPU optimization, and auto-scaling, as well as monitoring
+complex machine learning workflows.
+Security/compliance
+Skills in security, prompt injection prevention, PII redaction, data governance,
+data privacy, and audit trails for generated content.
+Not making this any easier—the knowledge about LLMs and RAG itself is relatively
+new, and continuously changes at a speed we’ve never seen before. Keeping up to date
+with all the best practices and maintaining a deep understanding of the complexities
+involved can be quite challenging for most capable teams.
+The challenges in assembling and maintaining highly skilled RAG teams stem from
+the rapid evolution of underlying technologies and the interdisciplinary nature of
+required skills. Each team member really needs to be an expert in their field, and the
+intense competition for AI talent, which is only expected to intensify further, makes
+this a real challenge.
+The bottom line is this: to build the full RAG pipeline on your own, as an organi‐
+zation, you have to be ready for continuous (and aggressive) investment in hiring,
+Challenges with RAG in Production 
+| 
+121
+upskilling, and continuously developing personnel with expertise in AI engineering
+(AIE), machine learning engineering (MLE), DevOps, and security.
+The alternative is to adopt turnkey RAG services for nondifferentiated components
+while leveraging in-house domain expertise (and talent) for the needs and require‐
+ments of the business.
+Total Cost of Ownership
+When migrating your RAG application from POC to production, it’s helpful to
+consider the total cost of ownership (TCO) required and plan your budget to make
+sure you have enough budget support, not only for a successful initial deployment,
+but also for additional use cases of RAG and agentic RAG.
+Next, we’ll cover the main components of a TCO estimate for RAG.
+Direct costs
+These are costs that you pay directly to a vendor for some service or component
+license that’s included in your RAG stack:
+Vendor management
+Vendor management needs to be considered for vector embeddings and LLMs.
+You will almost certainly need vendors for some components for the RAG pipe‐
+line. If you have to manage many vendors, payments, and cost optimization
+among different vendor components, the cost of management can become a
+factor. Each additional vendor incurs security, legal, and IT overhead. There is
+always the risk for vendor lock-in, which means future pricing hikes can increase
+the overall cost of your RAG pipeline.
+Retrieval pipeline operation
+Expenses for running the retrieval pipeline, which encompasses the vector data‐
+base, lexical database (if employing hybrid search), and reranking, need to be
+included. It is important to note that vector databases often exhibit nonlinear
+cost scaling as increased data volumes require enhanced performance, such as
+low latency and high uptime.
+Compute and storage
+There are costs for both staging and production environments, often combining
+both CPU and GPU resources, to handle complex processing tasks.
+122 
+| 
+Chapter 4: Deploying RAG to Production
+Indirect and ongoing costs
+Beyond the upfront expenditures, several indirect factors contribute to the overall
+TCO.
+As your RAG stack grows, adding more data, expanding use cases, and increasing
+query volumes, your compute and storage needs will rise over time. Furthermore,
+ongoing support contracts with each vendor, regular system updates, and infrastruc‐
+ture monitoring can quickly add nontrivial additional costs.
+Depending on your IT organization and its requirements, you may incur costs when
+integrating the RAG stack with existing enterprise software or third-party tools,
+implementing additional systems for data ingestion, testing, DevOps, and monitor‐
+ing, as well as security and privacy controls.
+Additional total cost of ownership considerations
+A thorough TCO evaluation should also factor in cybersecurity controls such as
+intrusion detection, regular audits, and any additional requirements your organiza‐
+tion needs to comply with.
+Now, unfortunately, no system is completely resistant to downtime. Often at pro‐
+duction scale, a system is required to adhere to business continuity requirements
+and recovery solutions, adding even more to the costs. To address this, you can
+implement (at additional cost, thus the implication to TCO) high-availability (HA)
+architectures such as multi-region deployments, which use automatic failover mecha‐
+nisms to rapidly redirect operations to a healthy secondary location if the primary
+one fails, ensuring business continuity.
+In summary, successfully migrating your RAG application from POC to production
+requires a detailed and realistic assessment of both capital expenditures (CAPEX)
+and operational expenditures (OPEX). By accounting for direct vendor payments,
+compute and storage requirements, and a wide range of indirect costs, you can better
+prepare for the true costs of scaling your RAG solution.
+We find that quite often, initial cost estimates for do-it-yourself (DIY) RAG deploy‐
+ments are notoriously unreliable, with actual production expenses often exceeding
+projections by 3–5x. So plan carefully, budget realistically, and consider long-term
+implications to achieve a successful, cost-effective production deployment.
+Challenges with RAG in Production 
+| 
+123
+Cost monitoring
+Given this high risk of cost escalation, especially with pay-per-token LLM APIs and
+auto-scaling compute, you should implement granular monitoring of cost with hard
+alerts. In your production architecture, integrate billing and usage dashboards from
+your cloud provider and LLM vendors directly into your primary monitoring system,
+including budget-based alerting and rate limiting:
+• Budget-based alerting automatically notifies the operations team when costs
+•
+approach predefined thresholds (e.g., at 50%, 80%, and 100% of the monthly
+budget).
+• Rate limiting prevents a single faulty service, a malicious user, or a “denial-of-
+•
+wallet” attack from generating a catastrophic bill for your team.
+Another strategy for controlling costs is to adopt a cascading model approach,
+where instead of sending every query to your most powerful (and most expensive)
+LLM, you can implement a “router” logic (Figure 4-1). This router first sends the
+query to a smaller, faster, and much cheaper model, and if that model provides a
+high-confidence answer or if the query is flagged as “simple,” the response is returned
+immediately. Only if the query is complex or the cheap model fails is it “escalated”
+to the expensive frontier model. This tiered approach can dramatically reduce your
+average cost per query while maintaining high quality for the most difficult user
+questions.
+Figure 4-1. Cascading model approach via LLM router
+124 
+| 
+Chapter 4: Deploying RAG to Production
+You can certainly implement your own LLM router, or can use existing libraries
+or services like LiteLLM or Not Diamond. Regardless of how you implement it,
+as always, it’s important to make sure it’s integrated into your observability and
+logging systems, and not only reports the types of calls made, but also automatically
+computes the costs based on specific LLM costs.
+The complexity of the total cost of ownership is a common reason companies choose
+turnkey RAG solutions, where a single vendor provides all the functionality for RAG.
+In these cases, the vendor provides a significantly simplified cost structure, making
+the TCO much more predictable and manageable, both initially and over time.
+RAG Evaluation
+As we mentioned in “Response Quality and Reduced Hallucinations” on page 106,
+maintaining a healthy RAG pipeline with high-quality responses, low hallucinations,
+low latency, and high availability can be tricky as you scale up. An important com‐
+ponent that may help in addressing this challenge is a reliable RAG evaluation
+framework, which we discuss in Chapter 6.
+As the old adage goes, “you can’t fix what you can’t measure.” If you don’t have a
+reliable framework in place for measuring response quality and quantifying halluci‐
+nations, your quality may degrade over time as you scale in production, and you may
+not realize it. Continuously measuring your RAG pipeline often requires scalable and
+efficient implementation of retrieval metrics and generation metrics, as well as overall
+end-to-end RAG response quality evaluation.
+So far in this chapter, we highlighted many of the challenges you may face when
+moving your RAG application from POC to production, but don’t despair. Many
+companies successfully navigate this transition, and in the next section, we will walk
+through some strategies to successfully navigate it.
+A Reference Production Architecture
+Now that we have outlined the significant challenges of moving RAG from POC to
+production, let’s move from the what to the how. Addressing issues like high latency,
+security, and vendor chaos requires a deliberate system design.
+A robust, scalable RAG pipeline is best built as a decoupled, microservice-based
+system. This architecture, as described briefly in our discussion on latency, is the key
+to managing complexity and enabling independent scaling. There are many ways to
+build such a system. Figure 4-2 shows one reference architecture.
+A Reference Production Architecture 
+| 
+125
+Figure 4-2. Example production architecture for RAG
+126 
+| 
+Chapter 4: Deploying RAG to Production
+Let’s review some of the details in this diagram. On the ingestion side:
+Document extraction
+The document extraction microservice deals with documents on ingestion.
+Depending on the data source and the document type, it can extract text from
+binary files, perform table or image processing, and extract metadata. For meta‐
+data, if PII redaction is required, it is often done before storing the metadata.
+Chunking
+The chunking microservice splits documents into smaller chunks. It could be
+part of the document extraction microservice, but having it as a separate service
+provides more flexibility for more complex chunking strategies like semantic
+chunking.
+Document and query embedding
+The document embedding and query embedding can be implemented as a single
+microservice that hosts the embedding model, serving for both queries and
+documents, or they can be separate microservices.
+After ingestion processing, the embedding vectors are stored in the vector DB, and
+the text itself is stored in the lexical search system. If metadata is extracted, it is also
+commonly stored in the lexical search system for future retrieval.
+Each one of these microservices can be implemented with high availability (multiple
+instances), and, of course, they all need to implement security best practices like
+end-to-end encryption.
+Now for the query flow:
+• The query string is sent to the query embedding service, and then to semantic
+•
+search using the vector database, while at the same time, the same query string is
+sent over to the lexical search system.
+• Relevant chunks from both vector search and lexical search are combined and
+•
+sent to the reranking service for final relevance ranking.
+• In this stage, if needed, PII masking can be applied before chunks are sent via
+•
+a prompt to the LLM, followed by guardrails—all inside the generative microser‐
+vice—resulting in the final response.
+As mentioned in “High Latency” on page 109 earlier in this chapter, caching can be
+applied throughout this architecture in the retrieval, chunk, and full response levels.
+Security needs to be addressed in every layer and every component—at rest and in
+transit—and vulnerability detection and mitigation best practices should be applied
+across each component and microservice.
+A Reference Production Architecture 
+| 
+127
+What’s not shown in this diagram are the three key aspects of MLOps: logging,
+monitoring, and observability, which need to be reliably integrated into each of the
+components and microservices, according to your organization’s best practices.
+With this understanding of the main issues, and an idea of what a production
+architecture might look like in more detail, you are ready to plan and execute your
+transition from POC to production.
+Successful Transition from Proof of Concept to Production
+Now that you know the risks and challenges, you are ready to plan your RAG
+production deployment.
+As with the deployment of any complex technology stack, careful planning can help
+in mitigating risks, and generative AI is no exception. In most cases, the POC already
+provided some initial hands-on experience, so you have a good set of questions to
+ask, and likely a good sense for what is important.
+Summarize What You Learned in the Proof of Concept
+Start with creating a report that summarizes all of the learnings from the POC. Here
+are some example questions and details that you might include in your report:
+• Which components did you use in the POC: vector database, embedding model,
+•
+reranker, LLM, etc.?
+• How was data collected and ingested from source data stores? Did you imple‐
+•
+ment any special processing for tables or images? Were there any data sources
+that required special attention?
+• What was the prompt used for your RAG POC? How well did it work in terms of
+•
+generating appropriate responses and minimizing hallucinations?
+• Which advanced RAG capabilities did you test (e.g., hybrid search, knowledge
+•
+graphs)?
+• Did the response quality meet your expectations for the POC?
+•
+— How was latency measured?
+—
+— How did you evaluate the response quality?
+—
+• What unexpected issues did you uncover?
+•
+• What functionality did you not have in your POC and wanted to include, and
+•
+why?
+Once you write down this report, you are ready to define the goals for your actual
+production implementation.
+128 
+| 
+Chapter 4: Deploying RAG to Production
+Define Goals and Requirements
+Before you get started with actual implementation, it really helps if you define the
+goals and requirements for your production deployment. In fact, you might want
+to revisit the business goals to ensure that the POC’s objectives align with your
+production goals.
+Where applicable, use key performance indicators (KPIs) to define the requirements
+in a numeric form. You can fill in the results from the POC report and define how
+much better you might want this to look in your production deployment.
+Table 4-2 shows some of the KPIs and requirements that we’ve seen when working
+with many Vectara customers—feel free to use this list, or adapt it to your needs. We
+filled in sample values for demonstrative purposes, but, of course, values from your
+POC or your goals for production may be different.
+Table 4-2. Example list of RAG production system considerations
+KPI/requirement
+Definition
+POC
+Production
+Query latency
+Mean and median query response time (in
+seconds), measured over a set of 50 sample
+queries
+Mean: 7.5
+Median: 8.5
+Mean: 4.5
+Median: 4
+Uptime and
+availability
+The percentage of time the system is
+operational
+Not measured
+Uptime >= 99.99%
+Response quality
+RAG evaluation metrics such as context
+precision, context recall, hallucination,
+answer relevance, and average UMBRELA
+scores (more about these in Chapter 6)
+Not measured
+CP >= 0.9
+CR >= 0.8
+% Hallucation <= 0.05
+AR >= 0.9
+UMBRELA>2.5
+Data ingestion
+Data sources supported,
+file types supported,
+requirement for refresh
+Only local PDF
+files
+File types: PDF, DOCX, PPTX, HTML
+Sources: web pages, S3, Snowflake,
+Notion
+Refreshes daily
+Retrieval pipeline
+Supported retrieval techniques
+Vector search
+only
+Vector search
+Hybrid search
+Relevance reranking
+Diversity reranking
+Chunking
+Supported chunking strategies
+Fixed
+Fixed
+Semantic
+LLM selection
+The LLMs that are supported for generation
+OpenAI GPT-4o
+OpenAI GPT-5.1
+Anthropic Claude 4.5
+Llama 3.3 70B
+Deepseek-R1
+Embedding model
+selection
+Supported embedding models
+Anything on
+Hugging Face
+Anything on Hugging Face
+OpenAI and Cohere
+Knowledge graph
+Does the system include a knowledge
+graph?
+No
+No
+Successful Transition from Proof of Concept to Production 
+| 
+129
+In addition to the items listed in Table 4-2, there are other system considerations to
+plan for in your production deployment:
+Hardware
+Consider which machines you need (both CPU and GPU machines), as well
+as memory capacity and networking requirements. Also consider high avail‐
+ability requirements and staging environments, which often require additional
+hardware.
+Development environment and process
+Where would code be hosted? Which CI/CD system will you use? What unit,
+integration, or regression testing will you want to implement?
+Data connectivity
+Which enterprise systems does the RAG application need to connect to for
+data ingestion, and how would credentials be provided? Consider implementing
+RBAC in your RAG to prevent data leakage.
+Data security and governance
+How does the system adhere to audit requirements, SOC-2 compliance, HIPAA
+compliance, or the GDPR (whatever is applicable in your organization)? Is all
+data encrypted end-to-end across all components?
+Monitoring
+How would you implement monitoring? Consider systems monitoring for
+uptime, latency monitoring, as well as user satisfaction (see Chapter 6 for RAG
+evaluation metrics).
+Budget
+What is the expected monthly budget allocated for the RAG application? How
+does performance degrade when you have a budget overrun?
+Once the planning is complete, you can transition to implementation. This requires
+the traditional execution excellence skills in project management, Agile development,
+and strong team coordination. Successful technical implementation in your enter‐
+prise is highly dependent on R&D and IT practices, which vary significantly from one
+organization to the next, and is beyond the scope of this book.
+So let’s fast forward—your first production deployment of the first RAG use case is
+two weeks out, and you are now ready to roll it organization-wide. What comes next?
+Ensuring Continued RAG Success
+First and foremost, you want to ensure a smooth and successful launch. This often
+requires training employees or customers on the new RAG application, making sure
+130 
+| 
+Chapter 4: Deploying RAG to Production
+they are fully aware of all the capabilities and understand when to use it, and how to
+do so in the most effective way.
+While users are using the RAG application, it’s critical to pay careful attention to the
+metrics you have carefully built in—not only user satisfaction with query responses,
+but also latency and system performance.
+You might, for example, see query volume peak in the first few days, only to drop
+back to a much smaller volume of daily queries after two to three weeks. That likely
+indicates a problem somewhere—maybe the system is not providing useful responses
+to its users, and thus they revert back to their old ways of solving things. Maybe it’s
+a latency issue, and users don’t want to wait. With good logging and monitoring in
+place, you should be able to pinpoint the exact issue and work on remediation; for
+example, if latency has increased, that could easily be detected in your monitoring
+systems. Similarly, with detailed logging for each query of the response and a thumbs-
+up/thumbs-down indicator, you can quickly pinpoint problematic queries that users
+think are low-quality and investigate if the issue is inaccurate retrieval or generation,
+hallucination, or just missing data.
+It is not uncommon for some issues to arise in the first two weeks post-deployment—
+things you didn’t expect, or that did not come up during your pre-launch testing. So
+you want to make sure that you look at all the metrics, and react quickly to resolve
+any issues.
+Having strong monitoring and observability capabilities as part of the implementa‐
+tion dramatically improves your chance of success. By looking at user queries and
+responses, understanding latency metrics, and recording any issues that arise in
+day-to-day operations, you can quickly identify real application issues and move fast
+to remediate them.
+Assuming the initial launch goes smoothly (outside of some issues you quickly move
+to remediate, which you should expect), there still remains a significant amount of
+work going forward. This will range from menial tasks like systems maintenance, or
+compute upgrades as query volume and usage grows, to fixing system uptime issues.
+You may need to upgrade components from time to time—for example, if you use a
+vector database, it may need to be upgraded once you identify a security vulnerability.
+Integrating new techniques into your RAG pipeline is a bigger challenge.
+For example, let’s imagine that a new embedding model is released that is shown to
+have a consistent 5% quality improvement across all your use cases. Wouldn’t you
+want to adopt this? Of course you would. To do this, you would have to implement
+this new model in your RAG pipeline (both at ingest and query time), test everything
+end-to-end, update any system dependencies, and run a RAG evaluation (see Chap‐
+ter 6) comparing old versus new to prove that all works well and you see that 5%
+improvement.
+Ensuring Continued RAG Success 
+| 
+131
+This may be much easier said than done. For example, this new model may have a
+much higher latency. Or it may require a different type of GPU machine, which you
+might need to acquire or rent from a hyperscaler. And so on…
+And this is just one example. You might want to incorporate a new type of LLM,
+a better hybrid search algorithm, a new reranker, or an improved hallucination
+detection or correction component. In each upgrade to your RAG stack, make sure
+to follow a similar process as you did in the initial production deployment: plan, test,
+deploy, and monitor.
+Conclusion
+Moving from a POC to production deployment of RAG at enterprise scale is not easy.
+It requires a full understanding of all the requirements (security, governance, data
+privacy, systems operations) as well as maintaining a highly skilled team with diverse
+expertise.
+It’s important to keep in mind that not only do you need to implement the first
+version of the RAG application, but also support ongoing maintenance, upgrades,
+and any issues that may arise. This includes maintaining “data hygiene” at the source;
+the organization must have mature processes to ensure that the documents being
+fed into the RAG pipeline are clean, deduplicated, and regularly updated. As the
+generative AI landscape evolves with new techniques to improve response quality
+and reduce hallucinations, better LLMs and embedding models, and more efficient
+components and hardware, keeping your system up-to-date may be challenging and
+requires considerable investment.
+Most importantly, plan not only for continuous improvement but also for new use
+cases your organization will want to implement to gain more benefit from your RAG
+stack.
+Turnkey RAG platforms are quickly becoming a strong alternative to build-your-own.
+In this case, the vendor takes on this burden of quality implementation, upgrades,
+improvements, security, privacy, and continuous monitoring, leaving the developers
+with the focus on the RAG application itself—what data it should be based on, and
+where to integrate it into your business workflow.
+In the next chapter, you will learn about turn-key RAG platforms, what advantages
+they have over DIY systems, and what some of their limitations are.
+132 
+| 
+Chapter 4: Deploying RAG to Production
+CHAPTER 5
+The RAG Platform
+In Chapters 2 and 3, you learned all about do-it-yourself RAG—from the basic com‐
+ponents of embedding models and vector databases to more advanced components
+like hybrid search, reranking, and hallucination detection. Chapter 4 explored why
+taking a DIY RAG application from a simple proof of concept to a fully production-
+ready deployment is often more complex than it initially appears, highlighted the key
+challenges involved in scaling RAG in a real-world environment, and suggested steps
+to take for a successful DIY deployment in production.
+A “RAG platform” (also known as RAG-as-a-service or turnkey RAG) refers to a
+technology platform that implements most, if not all, of the RAG components behind
+a developer API. This abstracts away a lot of the complexity of building RAG,
+letting developers instead focus on the RAG application itself—what data should the
+responses be grounded in, and how the application integrates into your business or
+application flow.
+In this chapter, we will cover what a RAG platform provides and how to choose one
+that best fits your needs. We’ll demonstrate the usage of such a platform with Vectara.
+DIY Versus Platform RAG
+When you build a DIY RAG stack, you have granular control over each component
+of the RAG pipeline. This includes selecting and configuring vector databases (e.g.,
+Pinecone, Weaviate, Zilliz, Qdrant), hosting and serving any embedding model (e.g.,
+Cohere’s Embed v4 or Qwen3-Embedding-0.6B), defining and implementing chunk‐
+ing strategies, and customizing the LLM generation process.
+The power is in your hands to customize your RAG stack, but so is the responsibility
+of provisioning, integrating, scaling, and maintaining the underlying infrastructure.
+133

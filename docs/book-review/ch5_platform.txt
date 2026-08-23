@@ -1,0 +1,922 @@
+In contrast, a RAG platform provides a managed, end-to-end solution, abstracting
+the infrastructure complexities. Developers interact with the service through APIs to
+ingest data from their data sources, select and configure the retrieval pipeline, select
+embedding or generative models, and deploy a RAG application with minimal setup.
+It’s precisely this freedom from infrastructure overhead that gives RAG platforms
+their edge: with a DIY approach, you spend considerable effort on non-core tasks
+like server provisioning, vector DB optimization, ensuring high availability and low
+latency, and managing security updates for each component. RAG platform providers
+take over these operational overheads, allowing you to focus solely on building the
+application logic and delivering value to end users. This translates to faster develop‐
+ment cycles, reduced DevOps workload, and potentially lower upfront infrastructure
+costs, as services are often offered on a pay-as-you-go or subscription basis.
+Furthermore, a RAG platform often comes with built-in optimizations for low
+latency, high accuracy, and cost effectiveness, leveraging the provider’s expertise in
+managing large-scale RAG systems. RAG platform providers may also offer features
+like data source connectors, advanced monitoring and observability, as well as secu‐
+rity and privacy compliance out of the box, which would require significant engineer‐
+ing effort to replicate in a DIY setup.
+As shown in Figure 5-1, a RAG platform provides a central control plane that enables
+governance over security, accuracy, cost, and performance.
+While a DIY approach offers maximum flexibility and customization, RAG platforms
+are increasingly attractive for their convenience, speed of deployment, and reduced
+operational complexity. However, this ease of use comes with the risk of platform
+lock-in and potential migration costs should you need to switch providers.
+Now that you know what all the components are within a RAG stack and how they
+work (from Chapters 2 and 3), you have the necessary foundation to make a decision
+about whether to create your own RAG system or use a RAG platform, weighing the
+pros and cons with regard to the needs of your organization. In this chapter, we’ll
+discuss some nuances that will help you refine your understanding and make a fully
+informed decision.
+134 
+| 
+Chapter 5: The RAG Platform
+Figure 5-1. A RAG platform enables centralized management of security, accuracy, cost,
+and performance, while empowering developers to interact with a standardized “RAG
+API”
+Core RAG Capabilities
+The first consideration, of course, is the quality of the RAG response, which depends
+on the capabilities of both data ingestion and the query/retrieval pipeline. Let’s review
+each of these components to better understand the trade-offs between DIY and
+platform for each one of them.
+Embedding models
+Many RAG platforms offer a default embedding model. If you need to support
+non-English languages, it’s important to understand the embedding model’s support
+for other languages and its performance in the languages you require.
+Some RAG platform providers support a bring-your-own (BYO) embedding model.
+This feature provides you with some additional comfort and future risk mitigation:
+if the built-in embedding model will not be a good fit for a future use case, you
+can just replace it with a new embedding model that might be a better fit. Even so,
+remember that you have already generated embedding vectors for all your data, and
+DIY Versus Platform RAG 
+| 
+135
+switching to a new embedding model requires re-encoding your entire dataset, which
+adds additional time and cost.
+As you learned in Chapter 2, embedding models come in various sizes (or vector
+dimensions). Larger vector dimensions can potentially capture more nuanced seman‐
+tic detail, leading to higher retrieval accuracy overall. However, that is not always as
+impactful on overall accuracy, especially if combined with strong reranking models in
+the second step of retrieval (see “Advanced retrieval” on page 137 in Chapter 3 for a
+detailed discussion about reranking).
+Computationally, higher-dimensionality vectors are more expensive to process.
+Indexing these larger vectors requires more computational power and time, which
+in a DIY setup means investing in more powerful CPUs or GPUs. Querying also
+becomes more resource-intensive, as calculating similarity scores (e.g., cosine similar‐
+ity) between high-dimensional vectors involves more operations. This can lead to
+increased latency or the need for more compute instances to maintain performance,
+adding to operational costs.
+In a RAG platform, increases in memory requirements or computational demands
+fall on the vendor, and are typically reflected in the pricing. Therefore, if the BYO
+embedding model is a requirement, ask your vendor if this is a supported option, and
+ensure that you understand what extra costs that might entail.
+Vector databases
+When building your own RAG stack, you can select an open source vector data‐
+base like Milvus, QDrant, or Weaviate, or a proprietary one like Pinecone, or use
+the vector feature embedded in an existing database like Snowflake or MongoDB.
+Whichever one you use, it usually provides fine-grained control over indexing strate‐
+gies, sharding, and hardware or cloud infrastructure selection, providing you with
+the flexibility to optimize for your specific data, query patterns, and performance
+requirements, while better managing failure isolation. Obviously, this control comes
+with the responsibility of setup, ongoing maintenance, scaling, security patching, and
+the need for in-house expertise in vector database management, which can translate
+to significant operational overhead and hidden costs, even when the software is open
+source.
+An important consideration here is the dimensionality of the embedding model.
+Larger vector sizes, while potentially capturing more nuanced semantic detail, may
+lead to increased storage requirements, resulting in added costs and higher latency.
+Supporting higher vector dimensions can significantly impact costs for storage and
+processing for a DIY stack.
+A RAG platform bundles the vector database as part of the managed service, leaving
+the complexities of vector database setup and configuration, scaling, maintenance,
+136 
+| 
+Chapter 5: The RAG Platform
+and optimization to the provider. Clearly, the impact of larger vectors also impacts
+the cost for the RAG platform, and, thus, they may be reflected in their pricing.
+If you require deep customization and have the engineering talent to manage com‐
+plex database infrastructure, DIY can be a good option. Conversely, if speed to
+market, ease of use, and offloading operational burdens are important, and you’re
+comfortable with the provider’s chosen vector database capabilities, a RAG platform
+can be a more efficient route.
+Advanced retrieval
+As we’ve mentioned already multiple times, a robust and accurate retrieval pipeline is
+probably the most impactful component of RAG needed for accurate results. When
+you build a DIY RAG stack, it is common to start with just vector search (i.e., cosine
+similarity between embedding vectors, as we described in Chapter 2), and quickly
+improve upon this baseline with more advanced techniques like hybrid search, and
+one or more reranking options. Beyond performance, this pipeline also serves as a
+critical safety boundary; by narrowing the context provided to the generative LLM
+to only the most relevant and verified data, you significantly reduce the risk of
+hallucinations and “off-track” responses.
+When you build your own stack, you need to implement each part of this robust
+retrieval pipeline. Vector search is relatively easy once you have a vector database
+in place and you’ve chosen the embedding model. However, implementing hybrid
+search and rerankers can be a more difficult task and may require additional exper‐
+tise, time, and effort. But it’s important—this is where you get the really big gains in
+retrieval relevance and system reliability.
+When considering DIY versus a RAG platform, look carefully at the retrieval capabil‐
+ities available from your RAG platform provider and their commitment to continue
+to innovate in retrieval, and compare that to your team’s skills and expertise in
+building and maintaining search technology.
+Prompt engineering
+The main prompt engineering effort that’s part of your DIY RAG stack is that final
+prompt you use when sending the retrieved chunks to the generative LLM. As you
+saw in Chapters 2 and 3, that prompt serves two key purposes. First, it is the main
+prompt that guides the LLM on its task: summarizing the chunks retrieved while
+providing a coherent response to the user query. Second, careful prompt design (and
+continuous updates) can serve the purpose of fighting prompt injection attacks and
+can help reduce hallucinations and bias.
+Unfortunately, not all LLMs behave in the same way when it comes to prompts. Some
+LLMs have good compliance with the instructions in the prompt, while others don’t
+always follow your instructions. So don’t think of the prompt as something you set
+DIY Versus Platform RAG 
+| 
+137
+once and forget in your DIY RAG stack—you may need to adapt it to new LLMs as
+they become available, as well as different use cases and applications.
+Here, a RAG platform provides significant strategic benefit. Beyond deep expertise in
+prompt engineering, and staying current with LLM-specific nuances, these platforms
+enable centralized prompt governance. At an enterprise scale, this prevents an incon‐
+sistent safety posture across various teams and ensures that security protocols, hallu‐
+cination checks, and bias mitigations are applied uniformly across every application..
+Support for multiple LLMs
+With a DIY RAG stack, you have full control and flexibility over which LLM to call.
+You can use one of the commercial options like OpenAI, Anthropic, or Google, or an
+open-weight model like Llama 4, Qwen, Kimi, or DeepSeek.
+Choosing the right LLM for your RAG system might seem quite easy, but there is a
+subtlety here to consider: the performance characteristics of LLMs may change over
+time. That is, they may change how they behave or respond to various types of inputs;
+see, for example, the GPT-4o sycophancy incident. If you use an open-weight model,
+then you must take care of hosting it yourself on GPU-equipped machines.
+In that respect, a RAG platform provider becomes your trusted partner to determine
+the best LLM to use for your application, takes on the burden of testing various
+LLMs, keeps track of their changing characteristics, and makes sure your RAG
+application works properly and maintains a high quality of generated responses
+end-to-end.
+In some applications, using an LLM that is fine-tuned over an industry-specific
+dataset may be beneficial. With DIY RAG, you can easily achieve that and replace
+your LLM with a self-hosted version of the fine-tuned LLM. With a RAG platform,
+having a BYO LLM capability is important, and if you expect a fine-tuned generative
+LLM as part of your application stack, make sure to explore that capability with your
+RAG platform provider.
+Hallucination detection and correction
+As we’ve discussed in Chapter 3 in “Controlling Hallucinations in RAG” on page 88,
+hallucination detection and correction are key components in the RAG flow.
+By identifying responses from the LLM that are factually inconsistent with the infor‐
+mation in the retrieved chunks, and correcting such responses, you can dramatically
+improve the quality of responses from your RAG application.
+When looking at RAG platform providers, make sure there is support for this capa‐
+bility. If you use a DIY RAG stack, you will need to plan for implementing these
+components in your stack and supporting them over time.
+138 
+| 
+Chapter 5: The RAG Platform
+In addition to core RAG capabilities, it’s important to consider your data sources and
+what data ingestion will look like in your application.
+Data Sources
+Many RAG platform providers support data connectors to a growing list of data
+sources, such as email systems, Google Drive, SharePoint, Notion, Jira, Confluence,
+web pages, internal documentation, various database systems, Salesforce, or even Box
+or Dropbox for files.
+If you are considering a RAG platform, explore the data connectors that are available
+in depth to make sure they fit your requirements:
+• What file formats are supported?
+•
+• Do connectors support data refresh?
+•
+• How is error handling managed? Can the connector surface partial failures or
+•
+data gaps (e.g., skipped files) to ensure the LLM isn’t working with an incomplete
+knowledge base? Can a connector recover graciously from an error?
+• Do connectors support granular RBAC and real-time permission syncing to pre‐
+•
+vent data leakage and ensure users only retrieve information they are authorized
+to see?
+• How easy or difficult would it be to deploy in your IT environment?
+•
+• What logging and monitoring is available to ensure robust and stable data
+•
+connectivity?
+If you use a DIY RAG stack, you have three options for handling external data:
+• Build and maintain these connectors yourself, and add new connectors as you
+•
+need them.
+• Use an open source data connector project like Airbyte or an LLM orchestration
+•
+framework that includes data connectors like LlamaIndex or LangChain.
+• Use a commercial solution like Airbyte Cloud, LlamaCloud, or similar.
+•
+Whatever your approach, it’s important to take a hard look at the data sources you
+need for your application, and consider the work effort to implement connectors—
+not only for initial ingest but also for data refresh and updates.
+Table 5-1 provides a comparison of a few available data connectors for DIY RAG
+(although this continues to evolve, and new connectors are available constantly).
+DIY Versus Platform RAG 
+| 
+139
+Table 5-1. Open source data connector projects
+Project name
+Approx. total
+connectors
+Data refresh support
+LangChain
+130+
+External schedulers + vector store ops
+LlamaIndex
+160+
+LlamaCloud supports incremental updates
+Airbyte
+600+
+Built-in incremental sync (cursor, CDC), scheduling, Vector DB destination
+processing
+Meltano
+600+
+Yes, as long as there is a Singer tap that implements it
+Datavolo (part of
+Snowflake)
+300+
+Yes, NiFi‐based processors support true incremental fetching
+As you can see, most providers have built-in connectors to a relatively large number
+of data sources (anywhere from 130 to 600). Beyond the simple list of source types,
+it’s important to understand exactly how each connector works and whether it sup‐
+ports the specific data you have and need to ingest.
+For example, an email connector may work with Gmail, but not with Outlook.
+A HubSpot connector might only import part of the customer relationship man‐
+agement (CRM) system. A Jira connector may only import tickets but not their
+attachments.
+RAG Sprawl and Centralized Governance
+Building DIY RAG, while offering full granular control over your RAG pipeline, may
+lead to what is known as RAG sprawl—the proliferation of disparate, independently
+managed RAG applications across your organization.
+Each such RAG application might come with its own choice of vector database (e.g.,
+Weaviate, Zilliz, etc.), embedding model, and generative LLM, as well as different
+implementations for the data ingest process. This can quickly become a nightmare for
+central IT, which will have to manage multiple types of RAG components, each with
+its own complexity, and many of which might be incompatible with organizational
+policies.
+From a security perspective, each DIY RAG application might have its own imple‐
+mentation of access controls, data handling policies, and security configurations,
+making it challenging to enforce consistent security measures and effectively monitor
+for vulnerabilities. This fragmentation leads to “policy drift,” where security and com‐
+pliance guarantees erode over time as individual pipelines are updated or modified
+without centralized oversight.
+This lack of standardization can (inadvertently) lead to data silos with varying levels
+of protection, increasing the risk of data breaches, unauthorized access, and compli‐
+ance failures with regulations like the GDPR or California Consumer Privacy Act
+(CCPA).
+140 
+| 
+Chapter 5: The RAG Platform
+This is one area where a RAG platform might really shine, since it often offers a
+centralized and standardized approach to deploying and managing RAG applications,
+including the following services:
+• Managing IT resources like storage and compute (including both CPUs and
+•
+GPUs)
+• Built-in mechanisms for data governance, observability, auditability, and release
+•
+processes
+• Security features such as robust access control mechanisms, encryption proto‐
+•
+cols, and audit trails
+This ability to apply IT policies consistently across all RAG applications helps to
+avoid RAG sprawl.
+For example, consider a scenario where the marketing department builds a RAG
+application, inadvertently using a noncompliant vector database and ingesting raw
+EU customer data without proper GDPR masking. Simultaneously, the legal team
+builds a separate RAG system for contract review using a different, highly secure
+LLM. Central IT has no visibility into the marketing app’s compliance risk and no
+way to enforce a single data handling standard. A RAG platform solves this by pro‐
+viding a single, pre-configured “golden path.” It would enforce the use of an approved
+vector store and automatically apply PII redaction rules to all new applications,
+regardless of which department builds them.
+This centralization also prevents resource duplication and cuts costs. In a RAG sprawl
+environment, the data science team might deploy a large, expensive embedding
+model for a specific project. The sales team, unaware, could then deploy the exact
+same model on the same data for their own chatbot, doubling the ingestion costs.
+This duplication extends beyond just data; both teams are now paying for separate
+storage, using high-demand GPU/CPU resources to run inference, and tying up
+separate engineering and DevOps teams for upgrade and maintenance.
+From a pure security standpoint, this consolidation is critical. When RAG applica‐
+tions sprawl, each one becomes a separate, isolated target that must be independently
+secured, monitored, and patched. A vulnerability scanner might not even be aware
+of a new RAG app built by the legal team. A platform-based approach, however,
+provides a single, hardened perimeter for security teams to manage. It allows them
+to apply consistent role-based access controls, enforce uniform encryption standards,
+and run comprehensive vulnerability tests across all RAG applications at once. If a
+new vulnerability is discovered in a shared component, it can be patched once at the
+platform level, instantly protecting every application that uses it, rather than hunting
+down dozens of siloed, at-risk deployments.
+DIY Versus Platform RAG 
+| 
+141
+As companies continue even today to avoid “shadow IT” (the use of IT-related hard‐
+ware or software by a department or individual without the knowledge of the IT or
+security group within the organization), they are now working even harder to avoid
+its new incarnation: “shadow AI.” The fundamental challenge, as these examples
+show, is that the cost, compliance, and security risks of shadow AI are orders of
+magnitude greater.
+Cost and Upkeep
+Beyond security and governance, consider the financial and operational implications
+of choosing between a DIY RAG system and a RAG platform.
+A DIY approach is often the first step in the RAG journey, as teams learn about
+generative AI and build the first prototypes to quickly demonstrate value to the
+organization, and gain an understanding of the most impactful use cases.
+DIY often appears to be less expensive, if one only considers direct subscription
+fees: token costs for using LLMs. However, even direct API use costs can balloon
+pretty quickly if you are not carefully monitoring and controlling API usage and
+continuously optimizing it.
+The true costs of RAG, however, encompass much more. To get a more realistic
+picture, consider the costs incurred due to the following:
+• Setup, configuration, and ongoing maintenance of underlying infrastructure
+•
+(vector databases, LLMs, embedding models, rerankers, etc.)
+• Extensive time required for research, design, and testing of each RAG component
+•
+• The continuous operational burden of maintaining the infrastructure, patching
+•
+security vulnerabilities, updating models and algorithms, prompt re-engineering,
+improving your retrieval pipeline, hallucination mitigation controls, and scaling
+the infrastructure as usage grows
+These responsibilities require a dedicated team with specialized skills, representing
+a persistent operational expenditure and a drain on internal resources that could
+otherwise be focused on delivering core business innovation.
+In contrast, a RAG platform shifts much (although not all) of this ongoing mainte‐
+nance and operational overhead to the vendor, which can help replace this high and
+unpredictable TCO with a more predictable one, often in one of these two distinct
+pricing models:
+The developer-centric consumption model
+These are designed for bottoms-up adoption, featuring free tiers and low initial
+monthly subscriptions ($50–$500) that include a base set of resources. The TCO,
+142 
+| 
+Chapter 5: The RAG Platform
+however, remains variable, as costs are driven by granular, pay-as-you-go over‐
+ages. Examples include Ragie.ai and LlamaCloud.
+The all-in-one enterprise model
+These are designed for large enterprises and priced for TCO predictability (Vec‐
+tara is an example). They often feature an annual subscription that includes
+a large annual bundle of “credits”—an abstract unit of value that bundles all
+underlying costs (API calls, data storage, compute, and retrieval) into a single,
+predictable metric.
+Whether the pricing is consumption-based or annual subscription, these fees cover
+updates, security, and platform evolution. With scalability and future-proofing in
+mind, RAG platforms provide a streamlined path, since vendors are incentivized to
+keep their platforms at the cutting edge, incorporating the latest advancements in
+LLMs, retrieval techniques, and security practices, letting their customers focus on
+their specific RAG use cases.
+Deployment Options
+When considering deployment options for your RAG stack, keep in mind that the
+choice about whether to employ a SaaS solution, a more customizable VPC deploy‐
+ment, or a fully self-managed on-premises setup has implications regarding the level
+of control you’ll have over it, support SLAs, areas of responsibility, and resource
+allocation.
+DIY RAG deployment options
+For DIY RAG, clearly, you have a lot of flexibility and can deploy almost anywhere.
+The limitations come from the components.
+For example, if your vector database is a managed service and you need an on-
+premises RAG system, then you would need to choose a different vector database
+and deploy it locally. Similarly, in an on-premises environment, you may not be able
+to use a commercial API-based LLM, embedding model, or reranker due to a policy
+preventing data from going out of your environment, and would need to rely instead
+on a self-hosted LLM.
+RAG platform deployment options
+Most RAG platform vendors only support the SaaS deployment option, where the
+vendor manages the entire stack and pays the hyperscaler provider directly for
+infrastructure costs, although some do support VPC and on-premises options. In
+the SaaS model, many RAG platform providers ensure that adequate security and
+data governance controls are in place, ensuring their SaaS offering complies with
+HIPAA (the US’s Health Insurance Portability and Accountability Act), the GDPR
+DIY Versus Platform RAG 
+| 
+143
+(the EU’s General Data Protection Regulation), or SOC-2 (Service Organization
+Controls 2). However, your organization may require greater control over its data and
+environment, or even an “air-gapped” installation, where no data leaves your systems,
+and if that’s the case, the SaaS approach is simply a nonstarter.
+Deploying a RAG platform within a VPC of a public cloud provider like AWS,
+Azure, or Google Cloud ensures the RAG application operates in an isolated segment
+of the cloud, allowing for more granular control over network security and data
+privacy. This model demands more cloud architecture and MLOps expertise from
+your team, to manage the RAG application and its cloud resources, and usually suits
+businesses that already implement other cloud-based applications or have compliance
+requirements that can be met within a controlled cloud environment.
+The on-premises deployment of a RAG platform represents the highest level of
+control, and also the greatest responsibility. Hosting the entire RAG stack, including
+all hardware and software components, within an organization’s own data centers
+ensures that data never leaves the company’s physical perimeter. This approach is
+often favored by companies with highly sensitive data (such as financial services firms
+or healthcare companies), stringent regulatory obligations, or the need for air-gapped
+(no internet connection to the outside world) environments.
+While offering maximum security and low-latency access, on-premises RAG necessi‐
+tates solving specific architectural challenges:
+Hardware infrastructure
+(CAPEX versus OPEX): You swap API costs for significant upfront hard‐
+ware investment. High-performance RAG requires enterprise-grade GPUs (e.g.,
+Nvidia A100s/H100s) with sufficient VRAM to hold LLM weights in memory.
+Local model inference
+Because an air-gapped environment prevents calls to external APIs (like
+OpenAI), you cannot use commercial LLMs. Instead, you must rely on open-
+weight models or self-hosted models (e.g., Llama 4, Mistral, DeepSeek, gpt-oss)
+and manage local inference servers. It is not just the LLM that is affected; stan‐
+dard ingestion pipelines often rely on cloud-based OCR or parsing APIs, and in
+an on-premises setup, you must deploy local alternatives for every step, including
+embedding models, rerankers, and multimodal processing tools for images or
+tables.
+Operational overhead
+Your team takes full responsibility for managing the infrastructure, patching OS
+security vulnerabilities, manually updating model weights, managing container
+orchestration (often via Kubernetes), as well as logging and monitoring of all
+systems.
+144 
+| 
+Chapter 5: The RAG Platform
+Ultimately, the decision between SaaS, VPC, and on-premises RAG hinges on a
+careful evaluation of your organization’s priorities concerning data security, control,
+customization needs, available technical expertise, budget, and the desired speed
+of deployment. There’s no one-size-fits-all answer; SaaS prioritizes ease and speed,
+on-premises prioritizes control and data isolation, and VPC offers a flexible middle
+ground.
+To provide an example of a full-fledged RAG platform, in the next section, we
+look at Vectara, reviewing its standardized API to better understand how its API
+helps developers control data ingestion, query parametrization, and hallucination
+mitigation, and prevent RAG sprawl.
+Example RAG Platform: Vectara
+The DIY approach to building RAG involves picking and integrating every compo‐
+nent, whether they are open source (like LlamaIndex, LangChain, Weaviate, etc.) or
+managed services (like Cohere, Pinecone, Gemini, and OpenAI).
+The major cloud providers offer a middle ground between DIY and platform, with
+“platforms of services” like Amazon Bedrock Knowledge Bases, Google Cloud Vertex
+AI Search, and Azure AI Search. These are powerful toolkits that simplify DIY,
+but they still require the developer to select, configure, and orchestrate multiple
+components, such as wiring up a separate vector database or manually chaining the
+retrieval and generation API calls.
+This contrasts with true end-to-end RAG platforms (such as Vectara or Nuclia,),
+which bundle all components (document extraction, chunking, embedding, vector
+storage, retrieval, generation, and hallucination detection) into a single, unified API,
+hiding the complexity from the developer. This allows the developer to focus on
+building their RAG application instead of managing RAG infrastructure.
+To see a RAG platform in action, let’s demonstrate these principles through code.
+We will use Vectara as our example platform because we have ready access to the
+necessary components for demonstration, but you can perform similar explorations
+with other options like Nuclia.
+Getting Started
+To get started with Vectara, first create an account (Figure 5-2). Once you have an
+account, you can use the Console, which is your web-based interface for managing
+your Vectara account, corpora, and data.
+Example RAG Platform: Vectara 
+| 
+145
+Figure 5-2. The Vectara Console, which allows you to manage your Vectara account,
+create a corpus, upload data, and try queries
+In Vectara, a corpus refers to the virtual container of all the data that you ingested,
+after it’s been pre-processed, cleaned, and organized for querying. Each corpus is
+isolated, allowing you to have distinct datasets for different applications. For example,
+you might have one corpus for your company’s internal documentation, another for
+customer support tickets, and a third for product reviews.
+Documents in Vectara are the individual pieces of information that reside within a
+corpus and then subsequently used for search and generation of responses to queries.
+Now that you understand these basic terms, it’s time to create a corpus (Figure 5-3):
+1. Navigate to the “Corpora” section (often on a left sidebar).
+1.
+2. Click “Create corpus.”
+2.
+3. You’ll be prompted to provide the following:
+3.
+Name
+A user-friendly name for your corpus.
+Key (corpus key)
+A unique corpus identifier used in API requests.
+146 
+| 
+Chapter 5: The RAG Platform
+Description (optional)
+Any text you want to use for explaining the content or purpose of the corpus.
+Embedding model
+Select the model for vectorizing your data. In this case, please choose “Boo‐
+merang,” Vectara’s built-in embedding model.
+Filter attributes (optional but recommended)
+Define metadata fields you intend to use for filtering. You’ll specify the
+attribute name, its data type (text, integer, boolean, real), and whether it
+applies at the document level (doc) or document-part level (part). You can
+also choose if it should be indexed for faster filtering.
+4. Once created, the corpus is ready to receive data.
+4.
+Figure 5-3. “Create corpus” screen in the Vectara Console
+Example RAG Platform: Vectara 
+| 
+147
+Before you can actually work with the corpus using the API, you need to create a
+Vectara API key. There are three types of API keys in Vectara:
+Personal API key
+This key provides full permissions to any API operation on your Vectara account.
+Query-only API key
+This key, as its name implies, provides query-only access to the corpus.
+Query+index API key
+This type of key provides permissions for both indexing data (directly or via file
+upload) and querying the corpus.
+For all the examples below, we will use the corpus key “RAGBOOK,” and assume that
+you have created a query+index API key or personal API key in the code examples.
+Vectara also supports access to all API functionality via OAuth 2.0
+(as opposed to via an API key), but digging into that is beyond the
+scope of this book. If you’re interested in learning more about this,
+see the documentation page.
+Ingesting Data into Vectara
+Now that we have a corpus ready, let’s see what options Vectara provides for upload‐
+ing and indexing data.
+File upload
+We start with file upload: you can upload files of various types (like PDF, Word, PPT,
+HTML, Markdown, or text) into Vectara using the upload_file endpoint. Here’s an
+example:
+import requests
+import os
+corpus_key = "RAGBOOK"
+api_key = os.getenv("VECTARA_API_KEY")
+url = f"https://api.vectara.io/v2/corpora/{corpus_key}/upload_file"
+payload={}
+files=[
+  ('file',
+  ( 'pet_policy',
+    open('pet_policy.pdf','rb'),
+    'application/octet-stream')
+  )
+]
+headers = {
+148 
+| 
+Chapter 5: The RAG Platform
+  'Accept': 'application/json',
+  'x-api-key': api_key
+}
+response = requests.request(
+"POST", 
+url, 
+headers=headers, 
+data=payload, 
+files=files
+)
+res = response.json()
+print(res)
+The API response provides useful information about the file upload operation:
+{
+    'id': 'pet_policy', 
+    'metadata': {
+        'Producer': 'Skia/PDF m118 Google Docs Renderer', 
+        'Title': 'Employee Handbook - Company Pet Policy'
+    }, 
+    'storage_usage': {'bytes_used': 9215, 'metadata_bytes_used': 5803}
+}
+This is what happened behind the scenes:
+1. Vectara received the file content. In this case, it was a PDF file, so Vectara
+1.
+extracted the actual text from the file.
+2. This text was chunked using Vectara’s default chunking strategy (known as “sen‐
+2.
+tence chunking”).
+3. Vectara’s Boomerang embedding model was applied to each chunk, resulting in
+3.
+vector embeddings. Those were stored in Vectara’s internal vector database. The
+text of each chunk (with metadata if available) was stored in a separate text
+database (part of the Vectara RAG stack) alongside the vector embedding.
+This process illustrates the platform’s abstraction: all the complexity of text extraction,
+multimodal processing, chunking, embedding, and management of the vector store is
+handled by the platform. The goal of this approach, common to RAG platforms, is to
+provide a consistent developer experience via the API, regardless of scale.
+With file upload, you can choose additional capabilities with optional arguments, for
+example:
+• Selecting a chunking strategy to apply to the file: sentence or fixed chunking.
+•
+Example RAG Platform: Vectara 
+| 
+149
+• Enabling table extraction or image extraction on the file, which ensures tables or
+•
+images embedded in the uploaded document are properly handled in the RAG
+pipeline.
+• Attaching metadata fields to the document. For example, in a PDF document,
+•
+you might want to attach the author name or creation date as metadata fields.
+This ability to customize your ingestion process via API arguments exemplifies what
+we would see throughout any RAG platform: lots of capabilities already exist in the
+platform, and you choose which one you want to use by configuring the API call
+parameters; this is in contrast to DIY, where you have to build and maintain every
+capability yourself.
+Direct data ingestion
+In addition to file upload, you can also ingest text data directly into Vectara. This is
+useful for data that does not originate in individual files, and instead comes from a
+database, or other sources like Notion, Jira, Confluence, Salesforce, or Slack.
+Here’s an example of how you can ingest text directly to Vectara:
+import requests
+import json
+import os
+corpus_key = "RAGBOOK"
+api_key = os.getenv("VECTARA_API_KEY")
+url = f"https://api.vectara.io/v2/corpora/{corpus_key}/documents"
+payload = json.dumps({
+  "id": "selected-works-of-shakespeare",
+  "type": "structured",
+  "title": "William Shakespeare, Greatest Hits",
+  "metadata": {
+    "timespan": "26 April 1564---23 April 1616",
+    "stars": 5,
+    "author": "William Shakespeare"
+  },
+  "sections": [
+    {
+      "title": "King Lear",
+      "text": """Synopsis: King Lear, intending to divide his power and kingdom
+      among his three daughters, demands public professions of their love. His 
+      youngest daughter, ...""",
+      "sections": [
+        {
+          "title": "Act I",
+          "text": """KENT: I thought the king had more affected the Duke of 
+          Albany than Cornwall.\nGLOUCESTER: It did always seem so to us...""",
+          "metadata": {
+150 
+| 
+Chapter 5: The RAG Platform
+            "stage-instructions": "Enter KENT, GLOUCESTER, and EDMUND"
+          }
+        },
+        {
+          "title": "Act II",
+          "text": "EDMUND: Save thee, Curan. ...",
+          "metadata": {
+            "stage-instructions": "Enter EDMUND, and CURAN meets him"
+          }
+        }
+      ]
+    },
+    {
+      "title": "Antony and Cleopatra",
+      "text": """PHILO: Nay, but this dotage of our general's\nO'erflows the 
+      measure: those his goodly eyes, ..."""
+    }
+  ]
+})
+headers = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+  'x-api-key': api_key
+}
+response = requests.request("POST", url, headers=headers, data=payload)
+res = response.json()
+print(res)
+And the response is
+{
+    'id': 'selected-works-of-shakespeare',
+    'metadata': {
+        'timespan': '26 April 1564---23 April 1616', 'stars': 5,
+        'author': 'William Shakespeare'
+    }, 
+    'storage_usage': {'bytes_used': 468, 'metadata_bytes_used': 1005}
+}
+In this example, we ingested some text from King Lear. As you can see in the code,
+we added some document-level metadata, and the text itself is broken into sections.
+Note how sections can also be nested, to support complex representations of text in
+the data source, and that we can also add metadata to each section.
+Now that we have some data in our Vectara corpus, let’s see how you can use the API
+to execute queries.
+Example RAG Platform: Vectara 
+| 
+151
+Running Queries
+You may recall that the query flow, described in Chapter 1, involves processing the
+query through the full retrieval pipeline, which may include vector search, hybrid
+search, and reranking; then you craft a prompt that includes the retrieved chunks as
+context, and call the generative LLM to generate the response; and the final step is
+hallucination detection and correction.
+Like with data ingestion, the RAG platform API simplifies the query process, often
+into a single API call. In Vectara, this looks like this:
+url = f"https://api.vectara.io/v2/corpora/RAGBOOK/query"
+query_str = "Are pets allowed in the office?"
+payload = json.dumps({
+  "query": query_str,
+  "search": {
+    "lexical_interpolation": 0.025,
+    "offset": 0,
+    "limit": 50,
+    "context_configuration": {
+      "sentences_before": 2,
+      "sentences_after": 2
+    },
+    "reranker": {
+      "type": "customer_reranker",
+      "reranker_name": "Rerank_Multilingual_v1"
+    }
+  },
+  "generation": {
+    "max_used_search_results": 7,
+    "response_language": "eng",
+    "prompt_name": "vectara-summary-ext-24-05-med-omni",
+    "enable_factual_consistency_score": True
+  }
+})
+headers = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+  'x-api-key': api_key
+}
+response = requests.request("POST", url, headers=headers, data=payload)
+res = response.json()
+Search_results = res['search_results'])
+print(res['summary'])
+print(f"Factual Consistency Score: {res['factual_consistency_score']}")
+And the output is
+152 
+| 
+Chapter 5: The RAG Platform
+Pets are allowed in the office at Vectara, but with specific guidelines. Birds 
+are permitted and even encouraged in the workspace, although there are 
+particular rules to follow [2]. However, common household pets like cats and 
+dogs are not allowed on Vectara campuses [7].
+Factual Consistency Score: 0.77734375
+Here, we printed as output the summary and factual consistency score (aka halluci‐
+nation score). Of course, the res variable includes the full set of retrieved chunks; we
+just didn’t print them here as it would take multiple pages.
+Notice in the above example how, in spite of hiding a lot of the detail, the query API
+does allow quite a bit of flexibility and control:
+• Lexical_interpolation determines whether hybrid search is enabled, and
+•
+which interpolation value to use.
+• A choice for which reranker to use.
+•
+• The choice of generation_preset_name, which determines the generative LLM
+•
+and prompt.
+• How many search results (chunks) to send over to the generative LLM
+•
+(max_used_search_results).
+There’s another argument we didn’t use in the example above: stream_response.
+When set to true, the Vectara response would be “streaming” the generated response
+instead of sending it back as a single text string. This enables the user interface for
+your application to display the query response as it is generated word by word instead
+of waiting for the final response and displaying it all at once.
+In Chapter 3, we mentioned the ability to not only detect hallucinations but also to
+correct them. In the query call above, you’ve seen how the Vectara query call returns
+the factual consistency score with every response, helping you detect responses that
+might be hallucinated. Next, we look at another Vectara API option for correcting
+hallucinations.
+Hallucination Correction
+With Vectara’s correct_hallucinations API endpoint, you can correct hallucina‐
+tions detected in the query flow.
+Let’s see how this works:
+url=f"https://api.vectara.io/v2/hallucination_correctors/correct_hallucinations"
+payload = json.dumps({
+  "generated_text": hallucinated_response,
+  "documents": [
+      {"text": r["text"]}
+      for r in search_results
+  ],
+Example RAG Platform: Vectara 
+| 
+153
+  "model": "vhc-large-1.0"
+})
+headers = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+  'x-api-key': api_key
+}
+response = requests.request("POST", url, headers=headers, data=payload)
+res = response.json()
+print(hallucinated_response)
+print(res['corrected_text'])
+And we get
+Pets are allowed in the office at Vectara, but with specific guidelines. 
+Birds are permitted and even encouraged in the workspace, but there are no rules 
+to follow [2]. However, common household pets like cats and snakes are not 
+allowed on the Vectara campuses [7].
+Pets are allowed in the office at Vectara, but with specific guidelines. 
+Birds are permitted and even encouraged in the workspace, but there are specific 
+guidelines to follow. However, common household pets like cats and dogs are not 
+allowed on the Vectara campuses.
+As you can see, the wrong facts (“no rules” and “snakes,” highlighted in red) were
+corrected properly based on the original text.
+We can also display the actual corrections that led to this corrected text:
+print(res['corrections'])
+Resulting in
+[{'original_text': 'Birds are permitted and even encouraged in the workspace, 
+but there are no rules to follow [2].',
+  'corrected_text': 'Birds are permitted and even encouraged in the workspace, 
+  but there are specific guidelines to follow.',
+  'explanation': 'The source states that birds are permitted and encouraged, but 
+  also explicitly mentions that there are specific guidelines and peculiarities 
+  to the policy. The response incorrectly claims there are no rules to follow, 
+  which is contradicted by the source.'},
+ {'original_text': 'common household pets like cats and snakes are not allowed 
+ on the Vectara campuses [7].',
+  'corrected_text': 'common household pets like cats and dogs are not allowed on 
+  the Vectara campuses.',
+  'explanation': 'The source specifies that cats and dogs are not allowed, but 
+  does not mention snakes as common household pets or as being specifically 
+  banned. The response adds "snakes" without support from the source.'}]
+This breakdown is useful as it shows specific spans of the original text, and for each
+such span the specific correction made and the explanation for that correction.
+154 
+| 
+Chapter 5: The RAG Platform
+Next we look at some other Vectara API calls that you can use to retrieve the full
+content of a document or its summary.
+Other RAG Admin API Endpoints
+Although ingest/upload and query represent the most used API endpoints, Vectara
+includes many more API endpoints that are used for administration. For example:
+Corpora
+List all corpora, create a corpus, and delete a corpus.
+Documents
+List all documents; delete a document; retrieve full text or summary of a
+document.
+API keys
+List API keys, create and delete API keys.
+User management
+Create a user on the account, and specify their permissions. List all users, delete a
+user, and reset password for a user.
+Query history
+See query history and additional analytics related to the account.
+For example, here is how you would list all the documents in your corpus:
+url = f"https://api.vectara.io/v2/corpora/RAGBOOK/documents"
+headers = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+  'x-api-key': api_key
+}
+response = requests.request("GET", url, headers=headers)
+res = response.json()
+res
+Which results in
+{'documents': [{'id': 'pet_policy',
+   'metadata': {'Producer': 'Skia/PDF m118 Google Docs Renderer',
+    'Title': 'Employee Handbook - Company Pet Policy',
+    'title': 'Employee Handbook - Company Pet Policy'}},
+  {'id': 'selected-works-of-shakespeare',
+   'metadata': {'timespan': '26 April 1564---23 April 1616',
+    'stars': 5,
+    'author': 'William Shakespeare',
+    'title': 'William Shakespeare, Greatest Hits'}}],
+ 'metadata': {'page_key': ''}}
+Example RAG Platform: Vectara 
+| 
+155
+As expected, we see two documents, one from the pet_policy.pdf document we inges‐
+ted via the file upload operation, and the other that was ingested as text via the
+indexing operation.
+When choosing a RAG platform, it’s important to make sure similar API endpoints
+exist in that platform, to enable automation of various administrative tasks. This
+allows central IT to better manage multiple RAG applications, understand both
+ingest and query activity, manage users as they join and leave the organization, and
+automate important IT tasks across all the applications of RAG in the organization.
+Conclusion
+In this chapter, we discussed the pros and cons of a RAG platform as compared to
+taking a DIY approach. You’ve seen that DIY RAG provides the most flexibility and
+control, but at a cost of time and effort, not only for the initial implementation but
+also for ongoing maintenance, upgrades, and DevOps support, as well as direct cost
+incurred by the various vendors. If you choose to go with DIY RAG, it’s valuable to
+consider this total cost of ownership.
+If you have more than one RAG application, the DIY approach can also lead to RAG
+sprawl, resulting in additional costs and duplicate efforts. RAG platforms continue to
+evolve as an alternative due to their appeal in terms of preventing RAG sprawl, and
+enabling organizations to enjoy a central platform for all of their RAG applications.
+This is not unlike the database world—nowadays, very few people, if any, are building
+their own dedicated database systems. Instead, they partner with a database vendor
+like Oracle, Microsoft, Databricks, or Snowflake, focusing on the application layer
+that uses the database and paying the database license fees to the providers so they
+can deal with that complexity. This specialization allows development teams to focus
+on their core business logic—the applications that create unique value—rather than
+reinventing the deep, complex engineering of a database query optimizer. A similar
+specialization is now emerging in RAG, allowing teams to build powerful RAG
+applications without having to first become experts in hosting LLMs, vector search,
+reranking, chunking strategies, multimodal data processing, and embedding models.
+Whether you build a DIY RAG stack or use a RAG platform, one of the most
+important things is measuring the quality of retrieval and LLM responses—not only
+at your initial launch but over time. In the next chapter, we are going to discuss this
+important problem of RAG evaluation.
+156 
+| 
+Chapter 5: The RAG Platform
+CHAPTER 6
+Evaluating Your RAG Application
+Whether you build your RAG on your own (DIY) or use a RAG platform, you need
+to be able to measure the quality of responses that users see when they use your RAG
+application. This is known as RAG evaluation, which measures how accurately the
+system finds the right documents or chunks (retrieval accuracy) and how coherently
+and correctly it crafts its response from those documents or chunks (generation
+accuracy).
+Before we jump into the details, it is helpful to distinguish between the two types of
+RAG evaluation:
+Offline evaluation
+Performed during the development cycle. These are deep, often resource-heavy
+evaluations used to optimize your pipeline settings before deployment.
+Online evaluation
+Performed on live traffic. This identifies how real users interact with the system
+but requires a lightweight approach to maintain a low-latency user experience.
+In this chapter, we focus primarily on offline RAG evaluation, discussing why it’s
+important, which metrics you should consider, and how to interpret each metric.
+Then, in “Online RAG Evaluation” on page 186, we briefly discuss online evaluation
+and provide some best practices.
+How Does RAG Fail?
+Not having a systematic approach to measuring the quality of your RAG application
+is not just a technical oversight; it’s a business risk that can undermine your entire
+AI strategy. Without a structured, rigorous evaluation framework for RAG, you risk
+157
