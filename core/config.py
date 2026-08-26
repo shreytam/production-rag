@@ -80,11 +80,14 @@ class Settings(BaseSettings):
     anthropic_judge_model: str = "claude-sonnet-4-6"
 
     # --- Reranker: one switch ---
-    reranker: Literal["local", "nim"] = "local"
+    reranker: Literal["local", "nim", "openrouter"] = "local"
     reranker_local_model: str = "BAAI/bge-reranker-v2-m3"
     reranker_nim_model: str = "nvidia/llama-3.2-nv-rerankqa-1b-v2"
     reranker_nim_base_url: str = NIM_BASE_URL
     reranker_nim_api_key: str = ""
+    reranker_openrouter_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2:free"
+    reranker_openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    reranker_openrouter_api_key: str = ""
 
     # --- HTTP resilience (NIM can be slow under high traffic) ---
     # Generous per-request ceiling + several automatic retries with the OpenAI
@@ -224,6 +227,7 @@ class Settings(BaseSettings):
         self.context_api_key = pick(self.context_api_key, self.context_base_url)
         self.judge_api_key = pick(self.judge_api_key, self.judge_base_url)
         self.reranker_nim_api_key = pick(self.reranker_nim_api_key, self.reranker_nim_base_url)
+        self.reranker_openrouter_api_key = pick(self.reranker_openrouter_api_key, self.reranker_openrouter_base_url)
         return self
 
     @model_validator(mode="after")

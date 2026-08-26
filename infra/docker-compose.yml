@@ -36,6 +36,9 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # One Postgres instance hosts BOTH databases: `rag` (document registry)
+      # and `langfuse`. This init script runs on first-ever startup only.
+      - ./initdb-multi:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rag"]
       interval: 5s
@@ -52,6 +55,8 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -83,9 +88,12 @@ services:
   #
   #   docker compose -f infra/docker-compose.yml up -d qdrant postgres redis ingest-worker
   ingest-worker:
-    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    build:
+      context: ..
+      dockerfile: Dockerfile
     restart: unless-stopped
-    working_dir: /workspace
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -94,30 +102,20 @@ services:
       qdrant:
         condition: service_started
     environment:
-      # Keep the container's venv OFF the bind-mounted repo so the host's macOS
-      # .venv is never used inside Linux; cache it in a named volume across restarts.
-      UV_PROJECT_ENVIRONMENT: /opt/venv
-      # In-cluster service DNS. The host-published ports (localhost:*) are for
-      # processes on the host; from inside compose we address services by name.
       REDIS_URL: "redis://:dev-redis-change-me@redis:6379"
       QDRANT_URL: "http://qdrant:6333"
       PG_DSN: "postgresql://rag:rag@postgres:5432/rag"
-      # The registry MUST be shared with the API, so it cannot be the in-memory
-      # backend — pin it to postgres (the table is auto-created on first use).
       DOC_REGISTRY_BACKEND: postgres
     volumes:
-      - ../:/workspace                 # source + shared .cache (blobs/sparse/manifest)
-      - ingest_worker_venv:/opt/venv   # Linux venv, isolated from the host .venv
-      - app_shared_cache:/workspace/.cache   # same named volume as `api`, so both see the same .cache
-    command: >
-      sh -c "uv sync --extra app --frozen && exec uv run --no-sync arq ingest.worker.WorkerSettings"
+      - app_shared_cache:/app/.cache   # same named volume as `api`, so both see the same .cache
+    command: ["uv", "run", "--no-sync", "arq", "ingest.worker.WorkerSettings"]
 
   # ── Langfuse v3 stack ──────────────────────────────────────────────────────
   langfuse-worker:
     image: docker.io/langfuse/langfuse-worker:3
     restart: always
     depends_on: &langfuse-depends-on
-      langfuse-db:
+      postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -128,8 +126,9 @@ services:
     ports:
       - "127.0.0.1:3030:3030"
     environment: &langfuse-worker-env
-      # Postgres (dedicated to Langfuse — separate from the app's Postgres DB)
-      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      # Postgres — SHARED instance with the app (separate `langfuse` database,
+      # created by infra/initdb-multi/01-langfuse.sql on first startup)
+      DATABASE_URL: postgresql://langfuse:***@postgres:5432/langfuse
       SALT: dev-salt-change-me
       # 64 hex chars (dev only). Prod: `openssl rand -hex 32`.
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
@@ -185,24 +184,8 @@ services:
       LANGFUSE_INIT_USER_NAME: Dev
       LANGFUSE_INIT_USER_PASSWORD: dev-password
 
-  langfuse-db:
-    image: docker.io/postgres:17
-    restart: always
-    environment:
-      POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: langfuse
-      POSTGRES_DB: langfuse
-      TZ: UTC
-      PGTZ: UTC
-    ports:
-      - "127.0.0.1:5433:5432"   # 5432 is taken by the app's postgres (document registry)
-    volumes:
-      - langfuse_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse"]
-      interval: 3s
-      timeout: 3s
-      retries: 10
+  # langfuse-db was merged into the shared `postgres` service (2026-08-24):
+  # one Postgres instance, two databases (`rag` app registry + `langfuse`).
 
   clickhouse:
     image: docker.io/clickhouse/clickhouse-server
@@ -267,7 +250,7 @@ volumes:
   pgdata:
   ingest_worker_venv:
   app_shared_cache:   # shared .cache (blobs/sparse index/manifest) between `api` and `ingest-worker`
-  langfuse_pgdata:
+  # langfuse_pgdata removed — Langfuse now lives in the shared pgdata volume
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:

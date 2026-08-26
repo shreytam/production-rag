@@ -79,6 +79,14 @@ def build_reranker(settings: Settings | None = None) -> Reranker:
         return NIMReranker(
             s.reranker_nim_model, s.reranker_nim_base_url, s.reranker_nim_api_key
         )
+    if s.reranker == "openrouter":
+        from providers.rerankers.openrouter_rerank import OpenRouterReranker
+
+        return OpenRouterReranker(
+            s.reranker_openrouter_model,
+            s.reranker_openrouter_base_url,
+            s.reranker_openrouter_api_key,
+        )
     raise ValueError(f"Unknown reranker: {s.reranker}")
 
 

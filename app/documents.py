@@ -97,7 +97,7 @@ def _build_arq_enqueuer() -> Callable[..., Awaitable[None]]:
 
             from ingest.worker import WorkerSettings
 
-            _pool = await create_pool(WorkerSettings.redis_settings())
+            _pool = await create_pool(WorkerSettings.redis_settings)
         await _pool.enqueue_job(_ACTION_TO_FN[action], document_id)
 
     return enqueue

@@ -197,3 +197,69 @@ class TestNIMReranker:
 
         url = mock_post.call_args.args[0] if mock_post.call_args.args else mock_post.call_args.kwargs.get("url")
         assert url == f"{self._BASE_URL}/ranking"
+
+
+# ---------------------------------------------------------------------------
+# OpenRouterReranker tests
+# ---------------------------------------------------------------------------
+
+class TestOpenRouterReranker:
+    _BASE_URL = "https://openrouter.ai/api/v1"
+    _API_KEY = "sk-or-test"
+    _MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2:free"
+
+    def _reranker(self) -> OpenRouterReranker:
+        from providers.rerankers.openrouter_rerank import OpenRouterReranker
+
+        return OpenRouterReranker(
+            model=self._MODEL,
+            base_url=self._BASE_URL,
+            api_key=self._API_KEY,
+        )
+
+    def _chunks(self) -> list[ScoredChunk]:
+        return [
+            _make_scored("X", "passage about X", 0.3),
+            _make_scored("Y", "passage about Y", 0.6),
+            _make_scored("Z", "passage about Z", 0.1),
+        ]
+
+    def _canned_response(self, results: list[dict]) -> MagicMock:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"results": results}
+        mock_resp.raise_for_status.return_value = None
+        return mock_resp
+
+    def test_openrouter_ordering_and_top_n(self) -> None:
+        results = [
+            {"index": 2, "relevance_score": 0.95},
+            {"index": 0, "relevance_score": 0.70},
+            {"index": 1, "relevance_score": 0.30},
+        ]
+
+        with patch("httpx.Client.post", return_value=self._canned_response(results)):
+            out = self._reranker().rerank("query", self._chunks(), top_n=2)
+
+        assert len(out) == 2
+        assert out[0].chunk.chunk_id == "Z"
+        assert out[1].chunk.chunk_id == "X"
+        assert out[0].rank == 1
+        assert out[1].rank == 2
+        assert out[0].source == RetrievalSource.RERANK
+        assert out[0].score == pytest.approx(0.95)
+
+    def test_openrouter_correct_endpoint_and_payload(self) -> None:
+        results = [{"index": 0, "relevance_score": 0.8}]
+
+        with patch("httpx.Client.post", return_value=self._canned_response(results)) as mock_post:
+            self._reranker().rerank("q", self._chunks()[:1], top_n=1)
+
+        url = mock_post.call_args.args[0] if mock_post.call_args.args else mock_post.call_args.kwargs.get("url")
+        assert url == f"{self._BASE_URL}/rerank"
+        headers = mock_post.call_args.kwargs.get("headers", {})
+        assert headers.get("Authorization") == f"Bearer {self._API_KEY}"
+        json_payload = mock_post.call_args.kwargs.get("json", {})
+        assert json_payload["model"] == self._MODEL
+        assert json_payload["query"] == "q"
+        assert json_payload["documents"] == ["passage about X"]
+

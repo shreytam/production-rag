@@ -37,7 +37,6 @@ infra/.env
 # Docs and tests (not needed at runtime; keep image small)
 docs
 tests
-README.md
 Project 1 — Production RAG.md
 
 # Misc

@@ -43,7 +43,11 @@ class OpenAICompatibleEmbedder:
 
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            kwargs: dict = {"model": self._settings.embed_model, "input": batch}
+            kwargs: dict = {
+                "model": self._settings.embed_model,
+                "input": batch,
+                "encoding_format": "float",
+            }
             if self._needs_input_type:
                 # truncate=END avoids hard failures when a chunk exceeds the
                 # model's max sequence length.
