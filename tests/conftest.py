@@ -31,6 +31,9 @@ def _hermetic_settings(monkeypatch):
             for variant in {key, key.upper(), key.lower()}:
                 monkeypatch.delenv(variant, raising=False)
     monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    # The strip above also removes RATE_LIMIT_BACKEND; re-pin the in-memory
+    # limiter so tests never touch (or share counters through) a real Redis.
+    monkeypatch.setenv("RATE_LIMIT_BACKEND", "memory")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
