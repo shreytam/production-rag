@@ -195,6 +195,7 @@ class RAGPipeline:
 
             q = Query(
                 text=retrieval_question,
+                rerank_text=question,
                 acl=acl,
                 top_k=self.settings.retrieve_top_k,
                 rerank_top_n=self.settings.rerank_top_n,

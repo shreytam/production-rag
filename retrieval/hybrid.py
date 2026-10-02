@@ -89,7 +89,9 @@ class HybridRetriever:
             return []
         window = fused[: self.fuse_window]
         try:
-            reranked = self.reranker.rerank(query.text, window, query.rerank_top_n)
+            reranked = self.reranker.rerank(
+                query.rerank_text or query.text, window, query.rerank_top_n
+            )
             if not reranked and window:
                 # Malformed success response (e.g. empty rankings list):
                 # degrade to fused order rather than answering from zero context.
