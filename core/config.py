@@ -192,6 +192,12 @@ class Settings(BaseSettings):
     ingest_stale_after_seconds: int = 3600
     ingest_sweep_interval_minutes: int = 5
 
+    # --- API rate limiting (per tenant, fixed 60 s window) ---
+    rate_limit_enabled: bool = True
+    rate_limit_backend: Literal["redis", "memory"] = "redis"  # memory is per-process (dev/tests)
+    rate_limit_query_per_minute: int = 60
+    rate_limit_upload_per_minute: int = 20
+
     # --- Semantic cache (Redis 8 / redis-vl; opt-in) ---
     cache_enabled: bool = False
     cache_similarity_threshold: float = 0.97

@@ -14,19 +14,25 @@ scoped in the registry, so one tenant cannot observe another's documents.
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi import Query as QueryParam
+from starlette.concurrency import run_in_threadpool
 
 from app.auth import require_principal
+from app.ratelimit import upload_rate_limit
 from core.types import DocumentRecord, DocumentStatus, Principal
 from ingest.parsers.base import ParserError, ParserRegistry
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
+log = logging.getLogger(__name__)
+
 _MAX_COLLECTION_ID = 128
+_READ_CHUNK = 1024 * 1024  # 1 MiB
 
 
 def _validate_collection_id(value: str) -> str:
@@ -117,7 +123,7 @@ def _blob_key(tenant_id: str, document_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@router.post("", status_code=202)
+@router.post("", status_code=202, dependencies=[Depends(upload_rate_limit)])
 async def upload_document(
     file: UploadFile = File(...),
     collection_id: str = Form(""),
@@ -137,20 +143,29 @@ async def upload_document(
     except ParserError:
         raise HTTPException(status_code=415, detail=f"unsupported content type: {content_type}")
 
-    raw = await file.read()
+    # Read in bounded chunks and abort the moment the cap is crossed, so a huge
+    # body is never held in memory (Starlette already spooled it to a temp file).
+    limit = parsers.max_bytes
+    buf = bytearray()
+    while chunk := await file.read(_READ_CHUNK):
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise HTTPException(status_code=413, detail="upload exceeds maximum size")
+    raw = bytes(buf)
 
-    # Enforce the size limit after reading (413). UploadFile streams to a spooled
-    # temp file, so this does not pin arbitrarily large bodies in memory.
+    # The client-declared Content-Type is untrusted: verify the bytes match it.
     try:
-        parsers.guard_size(raw)
+        parsers.validate_content(content_type, raw)
     except ParserError:
-        raise HTTPException(status_code=413, detail="upload exceeds maximum size")
+        raise HTTPException(status_code=415, detail="content does not match declared content type")
 
     document_id = uuid.uuid4().hex
     blob_key = _blob_key(principal.tenant_id, document_id)
-    blobs.put(blob_key, raw)
+    # Registry/blob I/O is synchronous (disk, psycopg): keep it off the event loop.
+    await run_in_threadpool(blobs.put, blob_key, raw)
 
-    registry.create(
+    await run_in_threadpool(
+        registry.create,
         DocumentRecord(
             document_id=document_id,
             tenant_id=principal.tenant_id,
@@ -160,9 +175,19 @@ async def upload_document(
             status=DocumentStatus.PROCESSING,
             blob_key=blob_key,
             collection_id=collection_id,
-        )
+        ),
     )
-    await enqueue(document_id)
+    try:
+        await enqueue(document_id)
+    except Exception:
+        # Never strand a PROCESSING row / orphan blob nobody will ever process.
+        log.exception("ingest enqueue failed for %s", document_id)
+        try:
+            await run_in_threadpool(registry.delete, document_id, principal.tenant_id)
+            await run_in_threadpool(blobs.delete, blob_key)
+        except Exception:
+            log.exception("cleanup after enqueue failure failed for %s", document_id)
+        raise HTTPException(status_code=503, detail="ingest queue unavailable, retry later")
 
     return {"document_id": document_id, "status": DocumentStatus.PROCESSING.value}
 
@@ -219,9 +244,25 @@ async def delete_document(
     registry=Depends(get_registry),
     enqueue: Callable[..., Awaitable[None]] = Depends(get_enqueuer),
 ):
-    record = registry.get(document_id, principal.tenant_id)
+    record = await run_in_threadpool(registry.get, document_id, principal.tenant_id)
     if record is None:
         raise HTTPException(status_code=404, detail="document not found")
-    registry.set_status(document_id, principal.tenant_id, DocumentStatus.DELETING)
-    await enqueue(document_id, "delete")
+    if record.status == DocumentStatus.PROCESSING:
+        # Deleting under a running ingest job would race it; client retries later.
+        raise HTTPException(status_code=409, detail="document is still processing")
+    await run_in_threadpool(
+        registry.set_status, document_id, principal.tenant_id, DocumentStatus.DELETING
+    )
+    try:
+        await enqueue(document_id, "delete")
+    except Exception:
+        log.exception("delete enqueue failed for %s", document_id)
+        try:
+            await run_in_threadpool(
+                registry.set_status, document_id, principal.tenant_id, record.status,
+                error=record.error, chunk_count=record.chunk_count,
+            )
+        except Exception:
+            log.exception("status revert failed for %s", document_id)
+        raise HTTPException(status_code=503, detail="ingest queue unavailable, retry later")
     return {"document_id": document_id, "status": DocumentStatus.DELETING.value}

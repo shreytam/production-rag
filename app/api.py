@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.auth import require_principal
+from app.ratelimit import query_rate_limit
 from core.config import get_settings
 from core.types import Principal
 
@@ -43,6 +45,21 @@ def get_pipeline():
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Production RAG API", version="1.0.0")
+
+
+# multipart framing (boundaries, part headers) adds a few hundred bytes on top of
+# the file; anything beyond this slack over the cap cannot be a compliant upload.
+_MULTIPART_SLACK = 2048
+
+
+@app.middleware("http")
+async def _reject_oversize_upload(request: Request, call_next):
+    """Cheap 413 from Content-Length before the multipart body is parsed/spooled."""
+    if request.method == "POST" and request.url.path == "/documents":
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > get_settings().max_upload_bytes + _MULTIPART_SLACK:
+            return JSONResponse({"detail": "upload exceeds maximum size"}, status_code=413)
+    return await call_next(request)
 
 
 @app.on_event("shutdown")
@@ -92,7 +109,7 @@ def healthz():
     return {"status": "ok"}
 
 
-@app.post("/query", response_model=QueryResponse)
+@app.post("/query", response_model=QueryResponse, dependencies=[Depends(query_rate_limit)])
 def query(
     body: QueryRequest,
     principal: Principal = Depends(require_principal),

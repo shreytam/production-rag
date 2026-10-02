@@ -4,6 +4,8 @@ import os
 # Langfuse, but the offline suite exercises the no-op tracer path exclusively
 # (real env vars outrank dotenv files in pydantic-settings).
 os.environ["LANGFUSE_ENABLED"] = "false"
+# Never touch a real Redis from the offline suite.
+os.environ["RATE_LIMIT_BACKEND"] = "memory"
 
 import pytest
 from core.config import Settings, get_settings
@@ -32,6 +34,16 @@ def _hermetic_settings(monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limiter():
+    """Per-test limiter state so shared tenant ids never trip a leftover window."""
+    from app import ratelimit
+
+    ratelimit._limiter = None
+    yield
+    ratelimit._limiter = None
 
 
 @pytest.fixture
