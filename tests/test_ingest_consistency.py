@@ -106,3 +106,73 @@ def test_upserts_are_batched(tmp_path):
                         ACLContext(tenant_id="t1"))
     assert max(sizes) <= incremental._UPSERT_BATCH and len(sizes) == 3
     assert len(store.chunks) == n
+
+
+# --- defect 6b: embedder integrity -------------------------------------------
+
+class _Item:
+    def __init__(self, index, emb):
+        self.index, self.embedding = index, emb
+
+
+def _embedder(items_fn):
+    from types import SimpleNamespace
+    from core.config import Settings
+    from providers.embedders.openai_compatible import OpenAICompatibleEmbedder
+    e = OpenAICompatibleEmbedder(Settings(embed_base_url="http://x", embed_api_key="k"))
+    e._client = SimpleNamespace(embeddings=SimpleNamespace(
+        create=lambda **kw: SimpleNamespace(data=items_fn(kw["input"]))))
+    return e
+
+
+def test_embedder_sorts_by_index():
+    e = _embedder(lambda inp: [_Item(1, [1.0]), _Item(0, [0.0])])
+    assert e.embed_documents(["a", "b"]) == [[0.0], [1.0]]
+
+
+def test_embedder_raises_on_count_mismatch():
+    import pytest
+    e = _embedder(lambda inp: [_Item(0, [0.0])])
+    with pytest.raises(ValueError):
+        e.embed_documents(["a", "b"])
+
+
+# --- defect 7: chunker --------------------------------------------------------
+
+def test_paragraphs_do_not_fuse():
+    from core.types import Document
+    from ingest.chunking import chunk_document
+    doc = Document(doc_id="d", tenant_id="t", text="end.\n\nNext paragraph")
+    text = chunk_document(doc, max_tokens=64, overlap=0)[0].text
+    assert "end.Next" not in text and "end." in text and "Next paragraph" in text
+
+
+def test_no_replacement_chars_from_slicing():
+    from core.types import Document
+    from ingest.chunking import chunk_document
+    doc = Document(doc_id="d", tenant_id="t", text="日本語のテキスト😀" * 200)
+    chunks = chunk_document(doc, max_tokens=17, overlap=5)
+    assert len(chunks) > 3
+    assert all("�" not in c.text for c in chunks)
+    assert [c.chunk_id for c in chunks] == [f"d::{i:06d}" for i in range(len(chunks))]
+
+
+# --- defect 8: contextual cache -----------------------------------------------
+
+def test_contextual_cache_key_depends_on_model_and_separator():
+    from ingest.contextual import _cache_key
+    assert _cache_key("m1", "ab", "c") != _cache_key("m1", "a", "bc")
+    assert _cache_key("m1", "a", "b") != _cache_key("m2", "a", "b")
+
+
+def test_contextual_cache_write_is_atomic(tmp_path):
+    from core.config import Settings
+    from ingest.contextual import ContextualPrefixer
+    from tests._fakes import RecordingGenerator
+    p = ContextualPrefixer(RecordingGenerator(text="ctx"), cache_dir=tmp_path,
+                           settings=Settings(pii_mode="keep"))
+    assert p.prefix_for("doc", "chunk", doc_id="d") == "ctx"
+    files = list(p._cache_dir.iterdir())
+    assert len(files) == 1 and files[0].suffix == ".json"
+    assert p.prefix_for("doc", "chunk", doc_id="d") == "ctx"
+    assert len(p._gen.calls) == 1

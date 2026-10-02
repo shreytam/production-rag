@@ -8,7 +8,7 @@ Security: doc_text is UNTRUSTED (it came from an external corpus). It is
 wrapped in explicit delimiters and the model is instructed to treat the content
 as inert data, not as instructions (spotlighting pattern).
 
-Caching: results are cached to disk keyed by sha256(doc_id + chunk_text) so
+Caching: results are cached to disk keyed by (model, prompt version, doc_id, chunk_text) so
 that re-runs and partial restarts are cheap.
 """
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from core.interfaces import Generator
@@ -48,9 +49,17 @@ Write 1-2 sentences that situate this chunk within the broader document. \
 Be concise and factual. Output ONLY the context blurb, nothing else."""
 
 
-def _cache_key(doc_id: str, chunk_text: str) -> str:
-    raw = (doc_id + chunk_text).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+_PROMPT_VERSION = "v1"  # bump when _SYSTEM_PROMPT / _USER_TEMPLATE change
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _cache_key(model: str, doc_id: str, chunk_text: str) -> str:
+    """Key on model + prompt version + hashed parts joined by a separator, so a
+    model/prompt change invalidates and ("ab","c") can't collide with ("a","bc")."""
+    return _sha("|".join((model, _PROMPT_VERSION, _sha(doc_id), _sha(chunk_text))))
 
 
 class ContextualPrefixer:
@@ -88,10 +97,9 @@ class ContextualPrefixer:
     ) -> str:
         """Ask the generator for a context blurb.
 
-        Cache is keyed by sha256(doc_id + chunk_text). If doc_id is empty,
-        only chunk_text is used for the key (slightly weaker dedup).
+        Cache is keyed by model, prompt version, doc_id and chunk_text.
         """
-        key = _cache_key(doc_id, chunk_text)
+        key = _cache_key(getattr(self._gen, "model", "") or "", doc_id, chunk_text)
         cache_file = self._cache_dir / f"{key}.json"
 
         if cache_file.exists():
@@ -117,10 +125,12 @@ class ContextualPrefixer:
             spans = build_pii_detector(self.settings).detect(prefix)
             prefix = redact(prefix, spans)
 
-        cache_file.write_text(
+        tmp = cache_file.with_name(f"{cache_file.name}.{os.getpid()}.tmp")
+        tmp.write_text(
             json.dumps({"prefix": prefix, "doc_id": doc_id}, ensure_ascii=False),
             encoding="utf-8",
         )
+        os.replace(tmp, cache_file)  # atomic: readers never see a torn file
         return prefix
 
     def annotate(
