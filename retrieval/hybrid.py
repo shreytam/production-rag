@@ -103,4 +103,6 @@ class HybridRetriever:
             logger.warning(
                 "reranker failed; falling back to fused RRF order", exc_info=True
             )
+            # Observable degradation: the pipeline copies this into the trace.
+            query.metadata["reranker_fallback"] = True
             return window[: query.rerank_top_n]

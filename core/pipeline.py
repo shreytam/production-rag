@@ -228,6 +228,7 @@ class RAGPipeline:
                 ret_output: dict[str, Any] = {
                     "n_hits": len(scored),
                     "cache": cache_status,
+                    "reranker_fallback": bool(q.metadata.get("reranker_fallback")),
                     "by_source": {
                         src.value: sum(1 for sc in scored if sc.source == src)
                         for src in set(sc.source for sc in scored)

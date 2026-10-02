@@ -1,4 +1,28 @@
+import httpx
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
 from core.types import RetrievalSource, ScoredChunk
+
+_MAX_ATTEMPTS = 3
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Retryable: timeouts, network errors, HTTP 429 and 5xx. Other 4xx
+    (auth, bad request) are permanent and must not be retried."""
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or status >= 500
+    return False
+
+
+retry_transient = retry(
+    retry=retry_if_exception(is_transient),
+    stop=stop_after_attempt(_MAX_ATTEMPTS),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    reraise=True,
+)
 
 
 def normalize_candidates(
