@@ -167,7 +167,7 @@ Pass `--contextual` to `ingest.run` to enable per-chunk LLM prefixes (~1 LLM cal
 | `langfuse_enabled` | `False` | |
 | `max_chunks_per_corpus` | `2000` | keeps corpora inside NIM rate limits |
 | `cache_enabled` | `False` | opt-in semantic cache; needs Redis 8 + `uv sync --extra cache` |
-| `cache_similarity_threshold` | `0.9` | min cosine similarity for a cache hit |
+| `cache_similarity_threshold` | `0.97` | min cosine similarity for a cache hit |
 | `cache_ttl_seconds` | `3600` | per-entry TTL (new-document staleness backstop) |
 | `rewriter_enabled` | `True` | SP12 query rewriter (synonym tier); retrieval-only, generation keeps the original question |
 | `rewriter_llm_enabled` | `True` | LLM expansion fallback for ≥ threshold-word queries with no synonym hit |

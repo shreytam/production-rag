@@ -13,6 +13,6 @@ def test_importing_cache_does_not_import_redisvl():
 def test_build_cache_constructs_two_named_tiers_without_connecting():
     from core.config import Settings
     answer, retrieval = sc.build_cache(Settings())
-    assert answer.index_name == "rag_cache_answer"
-    assert retrieval.index_name == "rag_cache_retrieval"
+    assert answer.index_name == "rag_cache_answer_v2"
+    assert retrieval.index_name == "rag_cache_retrieval_v2"
     # Construction must not require Redis or redis-vl to be installed/reachable.

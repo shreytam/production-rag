@@ -190,7 +190,7 @@ class Settings(BaseSettings):
 
     # --- Semantic cache (Redis 8 / redis-vl; opt-in) ---
     cache_enabled: bool = False
-    cache_similarity_threshold: float = 0.9
+    cache_similarity_threshold: float = 0.97
     cache_ttl_seconds: int = 3600
 
     # --- Query rewriting & synonym expansion (SP12) ---

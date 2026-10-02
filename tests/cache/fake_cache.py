@@ -1,5 +1,5 @@
 """In-memory SemanticCache for the offline suite: brute-force cosine, TAG-style
-tenant/collection scoping, targeted eviction, injectable-clock TTL. No Redis."""
+tenant/collection/acl scoping, targeted eviction, injectable-clock TTL. No Redis."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from cache.semantic_cache import norm_collection
+from cache.semantic_cache import acl_key, norm_collection
 
 
 @dataclass
@@ -17,6 +17,7 @@ class _Entry:
     payload: dict
     doc_ids: set[str]
     expires_at: float
+    acl: str = ""
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
@@ -42,10 +43,13 @@ class FakeSemanticCache:
         now = self.time_fn()
         return [e for e in bucket if e.expires_at > now]
 
-    def lookup(self, *, tenant_id, collection_id, embedding):
+    def lookup(self, *, tenant_id, collection_id, acl_tags, embedding):
         bucket = self._store.get(self._key(tenant_id, collection_id), [])
         best, best_sim = None, -1.0
+        want = acl_key(acl_tags)
         for e in self._live(bucket):
+            if e.acl != want:
+                continue
             sim = _cosine(embedding, e.embedding)
             if sim > best_sim:
                 best, best_sim = e, sim
@@ -53,11 +57,11 @@ class FakeSemanticCache:
             return best.payload
         return None
 
-    def store(self, *, tenant_id, collection_id, embedding, payload, doc_ids):
+    def store(self, *, tenant_id, collection_id, acl_tags, embedding, payload, doc_ids):
         bucket = self._store.setdefault(self._key(tenant_id, collection_id), [])
         bucket.append(_Entry(
             embedding=list(embedding), payload=payload, doc_ids=set(doc_ids),
-            expires_at=self.time_fn() + self.ttl_seconds,
+            expires_at=self.time_fn() + self.ttl_seconds, acl=acl_key(acl_tags),
         ))
 
     def invalidate_document(self, *, tenant_id, collection_id, doc_id) -> int:

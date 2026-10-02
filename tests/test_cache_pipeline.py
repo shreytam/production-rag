@@ -42,7 +42,7 @@ def _pipe(answer_cache, retrieval_cache):
 
 def test_answer_hit_skips_retrieval_and_generation():
     ac, rc = FakeSemanticCache(), FakeSemanticCache()
-    ac.store(tenant_id="public", collection_id=None, embedding=[1.0, 0.0],
+    ac.store(tenant_id="public", collection_id=None, acl_tags=(), embedding=[1.0, 0.0],
              payload=answer_to_payload(Answer(text="cached", refused=False)),
              doc_ids=["d1"])
     p, ret, gen = _pipe(ac, rc)
@@ -55,7 +55,7 @@ def test_retrieval_hit_skips_retrieval_but_generates():
     ac, rc = FakeSemanticCache(), FakeSemanticCache()
     sc = [ScoredChunk(chunk=Chunk(chunk_id="c1", doc_id="d1", text="ctx",
           tenant_id="public"), score=0.9)]
-    rc.store(tenant_id="public", collection_id=None, embedding=[1.0, 0.0],
+    rc.store(tenant_id="public", collection_id=None, acl_tags=(), embedding=[1.0, 0.0],
              payload=scored_to_payload(sc), doc_ids=["d1"])
     p, ret, gen = _pipe(ac, rc)
     ans = p.answer("hello")
@@ -69,8 +69,8 @@ def test_full_miss_runs_both_and_populates_tiers():
     p.answer("hello")
     assert ret.calls == 1 and gen.calls == 1
     # both tiers now warm for the same query
-    assert rc.lookup(tenant_id="public", collection_id=None, embedding=[1.0, 0.0]) is not None
-    assert ac.lookup(tenant_id="public", collection_id=None, embedding=[1.0, 0.0]) is not None
+    assert rc.lookup(tenant_id="public", collection_id=None, acl_tags=(), embedding=[1.0, 0.0]) is not None
+    assert ac.lookup(tenant_id="public", collection_id=None, acl_tags=(), embedding=[1.0, 0.0]) is not None
 
 
 def test_refused_answer_is_not_cached():
@@ -81,7 +81,7 @@ def test_refused_answer_is_not_cached():
     p = RAGPipeline(ret, _RefusingGen(), _settings(), embedder=ret.embedder,
                     answer_cache=ac, retrieval_cache=rc)
     p.answer("hello")
-    assert ac.lookup(tenant_id="public", collection_id=None, embedding=[1.0, 0.0]) is None
+    assert ac.lookup(tenant_id="public", collection_id=None, acl_tags=(), embedding=[1.0, 0.0]) is None
 
 
 def test_no_cache_wired_is_a_total_bypass():
