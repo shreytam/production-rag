@@ -25,8 +25,12 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    environment:
+      # Dev default follows this file's inline-secret convention; override via
+      # QDRANT_API_KEY in the shell/.env. Never empty: an empty key = no auth.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-dev-qdrant-change-me}
     volumes:
       - qdrant_storage:/qdrant/storage
 
@@ -85,10 +89,11 @@ services:
       qdrant:
         condition: service_started
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       REDIS_URL: "redis://:dev-redis-change-me@redis:6379"
       QDRANT_URL: "http://qdrant:6333"
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-change-me}
       PG_DSN: "postgresql://rag:rag@postgres:5432/rag"
       DOC_REGISTRY_BACKEND: postgres
     volumes:
@@ -124,6 +129,7 @@ services:
     environment:
       REDIS_URL: "redis://:dev-redis-change-me@redis:6379"
       QDRANT_URL: "http://qdrant:6333"
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-change-me}
       PG_DSN: "postgresql://rag:rag@postgres:5432/rag"
       DOC_REGISTRY_BACKEND: postgres
     volumes:
@@ -188,7 +194,7 @@ services:
     restart: always
     depends_on: *langfuse-depends-on
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       <<: *langfuse-worker-env
       NEXTAUTH_SECRET: dev-nextauth-change-me
@@ -238,7 +244,7 @@ services:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: miniosecret
     ports:
-      - "9090:9000"
+      - "127.0.0.1:9090:9000"
       - "127.0.0.1:9091:9001"
     volumes:
       - langfuse_minio_data:/data
