@@ -104,6 +104,8 @@ def test_upload_rejects_bad_collection_id(client):
 
 def test_delete_marks_deleting_and_enqueues(client):
     did = client.post("/documents", files={"file": ("n.txt", b"hi", "text/plain")}).json()["document_id"]
+    from core.types import DocumentStatus
+    client.registry.set_status(did, "t1", DocumentStatus.READY)  # ingest finished
     client.enqueued.clear()
     r = client.delete(f"/documents/{did}")
     assert r.status_code == 202
