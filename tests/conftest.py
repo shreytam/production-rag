@@ -6,7 +6,33 @@ import os
 os.environ["LANGFUSE_ENABLED"] = "false"
 
 import pytest
-from core.config import get_settings
+from core.config import Settings, get_settings
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_settings(monkeypatch):
+    """Make every test independent of the developer's local env files / env.
+
+    Settings reads infra/.env and .env; a dev machine's live keys would leak into
+    default-value assertions (and into failure output). Disable env-file loading
+    and strip every env var that maps to a Settings field.
+    """
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for name, field in Settings.model_fields.items():
+        keys = {name, name.upper()}
+        alias = field.validation_alias
+        if isinstance(alias, str):
+            keys.add(alias)
+        elif alias is not None and hasattr(alias, "choices"):
+            keys.update(c for c in alias.choices if isinstance(c, str))
+        for key in keys:
+            for variant in {key, key.upper(), key.lower()}:
+                monkeypatch.delenv(variant, raising=False)
+    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
 
 @pytest.fixture
 def require_live_or_fail():
