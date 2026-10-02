@@ -13,15 +13,21 @@ and tag-scoping is applied on the already-tenant-isolated candidate set.
 
 from __future__ import annotations
 
+import re
+
 from rank_bm25 import BM25Okapi
 
 from core.types import ACLContext, Chunk, RetrievalSource, ScoredChunk
 from retrieval.acl import acl_predicate
 
+_WORD_RE = re.compile(r"\w+")
+
 
 def _tokenize(text: str) -> list[str]:
-    """Simple whitespace + lowercase tokenizer."""
-    return text.lower().split()
+    """Lowercase unicode word tokenizer (punctuation-insensitive).
+
+    Used identically at index time and query time."""
+    return _WORD_RE.findall(text.lower())
 
 
 class BM25Retriever:
@@ -69,12 +75,16 @@ class BM25Retriever:
         bm25, chunks = self._indices[acl.tenant_id]
         scores = bm25.get_scores(tokens)
 
-        # Build (score, chunk) pairs, apply ACL predicate, sort descending
+        # Build (score, chunk) pairs, apply ACL predicate, sort descending.
+        # Chunks sharing no query term are dropped: they are noise, not weak
+        # matches. (Gate on lexical overlap rather than score > 0: Okapi IDF is
+        # <= 0 for terms in half or more of the docs, so real matches in small
+        # corpora can legitimately score 0 or below.)
         predicate = acl_predicate(acl, collection_id=collection_id)
         candidates: list[tuple[float, Chunk]] = [
             (float(scores[i]), chunk)
             for i, chunk in enumerate(chunks)
-            if predicate(chunk)
+            if predicate(chunk) and any(t in bm25.doc_freqs[i] for t in tokens)
         ]
         candidates.sort(key=lambda x: x[0], reverse=True)
 
