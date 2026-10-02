@@ -14,6 +14,15 @@ from pydantic import BaseModel
 from core.types import ChatMessage, GuardrailAction, GuardrailResult
 
 _ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍⁠﻿"), None)
+# Common Cyrillic/Greek homoglyphs of Latin letters (applied after casefold) so
+# "ignоre" (Cyrillic о) normalizes to "ignore".
+_CONFUSABLES = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+    "і": "i", "ѕ": "s", "ј": "j", "ԁ": "d", "һ": "h", "к": "k", "м": "m",
+    "т": "t", "ѵ": "v", "ԛ": "q", "ԝ": "w",
+    "α": "a", "ε": "e", "ο": "o", "ρ": "p", "ι": "i", "κ": "k", "ν": "v",
+    "τ": "t", "υ": "u", "χ": "x", "γ": "y",
+})
 _LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})
 
 
@@ -23,17 +32,27 @@ def _normalize(text: str) -> tuple[str, str]:
     `compact` (all whitespace removed) is what defeats letter-spacing attacks
     like `i g n o r e`; `spaced` preserves word boundaries for \\b patterns.
     """
-    base = unicodedata.normalize("NFKC", text).casefold().translate(_ZERO_WIDTH).translate(_LEET)
+    base = unicodedata.normalize("NFKC", text).casefold().translate(_ZERO_WIDTH).translate(_CONFUSABLES).translate(_LEET)
     spaced = re.sub(r"\s+", " ", base).strip()
     compact = re.sub(r"\s+", "", base)
     return spaced, compact
 
 
 # Patterns use \s* between tokens so they match in BOTH the spaced and compact forms.
+# Filler words between verb and target come from a closed vocabulary (not \w+) so
+# "ignore all the previous instructions" is caught but "ignore the typo in the
+# instructions" is not. Known ambiguity: "ignore the rules of chess" is blocked.
+_FILL = (
+    r"(?:(?:all|the|any|every|of|your|my|these|those|that|previous|prior|above|earlier|"
+    r"preceding|system|initial|original|given|safety)\s*){0,4}"
+)
+_VERB = r"(?:ignore|disregard|forget|override|bypass|skip|abandon|discard)"
+_NOUN = r"(?:instructions?|rules?|prompts?|directions?|directives?|guidelines?|commands?|constraints?)"
 _STRONG: list[tuple[str, re.Pattern[str]]] = [
-    ("ignore_previous", re.compile(r"ignore\s*(all\s*)?(previous|prior|above)?\s*instructions?", re.I)),
-    ("disregard_above", re.compile(r"disregard\s*(the\s*)?(above|previous|prior)", re.I)),
-    ("forget_instructions", re.compile(r"forget\s*(your\s*)?(previous\s*)?instructions?", re.I)),
+    ("ignore_previous", re.compile(_VERB + r"\s*" + _FILL + _NOUN, re.I)),
+    ("disregard_above", re.compile(r"(?:disregard|ignore|forget)\s*(?:(?:all|everything|anything|the)\s*){0,2}(?:above|previous|prior|preceding)(?!\s*(?:year|month|week|quarter))", re.I)),
+    ("forget_instructions", re.compile(r"forget\s*(everything|all)\s*(you\s*(were\s*)?(told|know)|above|before)", re.I)),
+    ("print_above_verbatim", re.compile(r"(?:print|repeat|reveal|show|output|display|recite|echo|copy)\s*(?:(?:me|all|of|the|your|that)\s*){0,3}(?:verbatim|everything)\s*(?:verbatim\s*)?(?:(?:that\s*)?(?:is\s*|comes\s*)?)(?:above|before\s*this|prior\s*to\s*this|preceding)", re.I)),
     ("reveal_prompt", re.compile(r"(reveal|show|print|output|repeat)\s*(your\s*)?(system|initial|original)\s*prompt", re.I)),
     ("exfiltrate_instructions", re.compile(r"(what\s*(are|were)\s*your\s*instructions?|tell\s*me\s*your\s*(instructions?|system\s*prompt))", re.I)),
     ("jailbreak", re.compile(r"jailbreak", re.I)),
