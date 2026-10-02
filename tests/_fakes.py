@@ -45,6 +45,9 @@ class InMemoryVectorStore:
         pass
 
     def upsert(self, chunks):
+        # Replace-by-(tenant, chunk_id), like a real point upsert.
+        keys = {(c.tenant_id, c.chunk_id) for c in chunks}
+        self.chunks = [c for c in self.chunks if (c.tenant_id, c.chunk_id) not in keys]
         self.chunks.extend(chunks)
 
     def search(self, embedding, top_k, acl: ACLContext, *, collection_id: str | None = None):
@@ -76,8 +79,21 @@ class InMemoryVectorStore:
             if c.tenant_id != acl.tenant_id:
                 continue
             payload = updates.get(c.chunk_id)
-            if payload and "title" in payload:
+            if not payload:
+                continue
+            if "title" in payload:
                 c.title = payload["title"]
+            if "collection_id" in payload:
+                c.collection_id = payload["collection_id"]
+            if "acl_tags" in payload:
+                c.acl_tags = tuple(payload["acl_tags"])
+
+    def delete_by_doc(self, tenant_id, doc_id):
+        gone = [c.chunk_id for c in self.chunks
+                if c.tenant_id == tenant_id and c.doc_id == doc_id]
+        self.chunks = [c for c in self.chunks
+                       if not (c.tenant_id == tenant_id and c.doc_id == doc_id)]
+        return gone
 
 
 class StrictInMemoryVectorStore(InMemoryVectorStore):

@@ -71,6 +71,11 @@ class VectorStore(Protocol):
 
     def update_metadata(self, updates: dict[str, dict], acl: ACLContext) -> None: ...
 
+    def delete_by_doc(self, tenant_id: str, doc_id: str) -> list[str]:
+        """Delete all points of a document by payload filter (manifest-free);
+        returns the chunk_ids that were removed."""
+        ...
+
 
 @runtime_checkable
 class SparseRetriever(Protocol):

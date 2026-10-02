@@ -7,7 +7,7 @@ Usage
 
 ``--input`` accepts a single PDF file or a directory (a ``*.pdf`` glob; add
 ``--recursive`` to descend into subdirectories). Every PDF gets a
-deterministic doc_id — uuid5 over its resolved absolute path — so re-running
+deterministic doc_id — uuid5 over tenant + resolved absolute path — so re-running
 the CLI over an unchanged tree is cheap: IncrementalIngestor diffs each
 document's chunks against its persisted manifest and skips everything that
 did not change (no re-embed, no upsert).
@@ -43,9 +43,11 @@ PDF_CONTENT_TYPE = "application/pdf"
 PDF_SUFFIXES = {".pdf"}
 
 
-def _doc_id_for(path: Path) -> str:
-    """Deterministic document id: uuid5 over the resolved absolute path."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, str(Path(path).resolve())))
+def _doc_id_for(path: Path, tenant_id: str) -> str:
+    """Deterministic document id: uuid5 over tenant + resolved absolute path, so
+    two tenants ingesting the same file never share (and overwrite) ids."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL,
+                          f"{tenant_id}\x00{Path(path).resolve()}"))
 
 
 def _collect_pdf_paths(raw_input: str, recursive: bool) -> list[Path]:
@@ -129,7 +131,7 @@ def _process_pdf(
     Returns per-document stats used for progress lines and the final summary.
     Raises on failure; the caller decides whether to continue with other files.
     """
-    doc_id = _doc_id_for(pdf_path)
+    doc_id = _doc_id_for(pdf_path, tenant_id)
 
     # Snapshot the previous manifest BEFORE ingesting, so we can report how
     # much work IncrementalIngestor skipped. Uses the same hashing functions
