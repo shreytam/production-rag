@@ -67,63 +67,73 @@ class OpenAICompatibleGenerator:
             }
 
         # --- First attempt ---
+        used_kwargs = kwargs
         try:
             response = self._client.chat.completions.create(**kwargs)
         except Exception as exc:
-            # Fallback: a model that rejects strict json_schema typically 400s with
-            # a message about response_format / json_schema / strict / schema. We
-            # trigger the json_object fallback on any BadRequest while a schema was
-            # requested (the request shape was refused), not just a literal match.
-            is_bad_request = isinstance(exc, openai.BadRequestError)
-            mentions_schema = any(
-                tok in str(exc).lower()
-                for tok in ("json_schema", "response_format", "schema", "strict")
+            # Fall back to json_object ONLY when the 400 says the response_format /
+            # json_schema / strict mode itself is unsupported. Any other
+            # BadRequest (e.g. context length) would fail identically — re-raise.
+            msg = str(exc).lower()
+            schema_rejected = isinstance(exc, openai.BadRequestError) and any(
+                tok in msg for tok in ("json_schema", "response_format", "strict", "schema")
             )
-            if response_model is not None and (is_bad_request or mentions_schema):
+            if response_model is not None and schema_rejected:
                 logger.warning("structured json_schema rejected; falling back to json_object: %s", exc)
-                fallback_kwargs = dict(kwargs)
-                fallback_kwargs["response_format"] = {"type": "json_object"}
+                used_kwargs = dict(kwargs)
+                used_kwargs["response_format"] = {"type": "json_object"}
                 schema_str = json.dumps(response_model.model_json_schema())
                 # Inject a system message to guide JSON output
-                fallback_messages = list(openai_messages)
-                system_instruction = {
-                    "role": "system",
-                    "content": f"Respond with valid JSON matching this schema: {schema_str}",
-                }
-                fallback_messages.insert(0, system_instruction)
-                fallback_kwargs["messages"] = fallback_messages
-                response = self._client.chat.completions.create(**fallback_kwargs)
+                used_kwargs["messages"] = [
+                    {
+                        "role": "system",
+                        "content": f"Respond with valid JSON matching this schema: {schema_str}",
+                    },
+                    *openai_messages,
+                ]
+                response = self._client.chat.completions.create(**used_kwargs)
             else:
                 raise
 
         content = response.choices[0].message.content or ""
         usage_obj = response.usage
-        usage = Usage(
-            prompt_tokens=usage_obj.prompt_tokens,
-            completion_tokens=usage_obj.completion_tokens,
-            total_tokens=usage_obj.total_tokens,
-        )
+        prompt_tokens = usage_obj.prompt_tokens
+        completion_tokens = usage_obj.completion_tokens
 
         parsed = None
         if response_model is not None:
-            # Try to parse; retry once on failure
-            for attempt in range(2):
+            try:
+                parsed = response_model.model_validate_json(content).model_dump()
+            except Exception as parse_exc:
+                # An identical temperature-0 call would just repeat the failure,
+                # so retry ONCE with an explicit "valid JSON only" nudge.
+                logger.warning("Parse failed on attempt 1; retrying with JSON nudge: %s", parse_exc)
+                nudged = dict(used_kwargs)
+                nudged["messages"] = [
+                    *used_kwargs["messages"],
+                    {"role": "assistant", "content": content},
+                    {
+                        "role": "user",
+                        "content": "Your reply was not valid JSON for the required schema. "
+                        "Return ONLY valid JSON matching the schema, with no other text.",
+                    },
+                ]
                 try:
-                    parsed_model = response_model.model_validate_json(content)
-                    parsed = parsed_model.model_dump()
-                    break
-                except Exception as parse_exc:
-                    if attempt == 0:
-                        logger.warning("Parse failed on attempt 1; retrying: %s", parse_exc)
-                        # retry: re-fetch with same kwargs
-                        try:
-                            retry_resp = self._client.chat.completions.create(**kwargs)
-                            content = retry_resp.choices[0].message.content or ""
-                        except Exception:
-                            pass  # leave content as-is
-                    else:
-                        logger.error("Parse failed on attempt 2; leaving parsed=None: %s", parse_exc)
-                        parsed = None
+                    retry_resp = self._client.chat.completions.create(**nudged)
+                    retry_content = retry_resp.choices[0].message.content or ""
+                    prompt_tokens += retry_resp.usage.prompt_tokens
+                    completion_tokens += retry_resp.usage.completion_tokens
+                    content = retry_content
+                    parsed = response_model.model_validate_json(content).model_dump()
+                except Exception as retry_exc:
+                    logger.error("Parse failed on attempt 2; leaving parsed=None: %s", retry_exc)
+                    parsed = None
+
+        usage = Usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
 
         return LLMResponse(
             text=content,
