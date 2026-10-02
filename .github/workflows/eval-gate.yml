@@ -1,0 +1,132 @@
+# CI pipeline for Production RAG
+#
+# Three jobs:
+#   lint              — offline: ruff + pytest (no secrets, no services required)
+#   acl-isolation     — online: postgres/qdrant service containers for tenant security tests
+#   eval-gate-status  — aggregates the above into the single required status check
+#
+# The Langfuse eval gate (preflight + eval jobs) was removed together with the
+# eval/ harness and benchmark corpora on the PDF-only branch. Reinstating a
+# retrieval-quality gate is tracked in docs/BACKLOG.md.
+
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: lint + offline tests — no secrets, no services needed
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint & Offline Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Offline test suite
+        # These tests use fakes/mocks; no NVIDIA_API_KEY or running services required.
+        run: uv run pytest -q
+
+  # ---------------------------------------------------------------------------
+  # Job 2: acl-isolation — postgres and qdrant security test suite
+  # ---------------------------------------------------------------------------
+  acl-isolation:
+    name: Live Database ACL Isolation Tests
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+      # Stock postgres:17 — the app uses Postgres only for the document
+      # registry. Qdrant is the sole vector store, so the pgvector extension
+      # (and the pgvector/pgvector:pg16 image that carried it) is not needed.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: rag
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      # Postgres is gated by its pg_isready healthcheck; Qdrant ships no curl for
+      # an in-container healthcheck, so poll /readyz from the runner host instead.
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:6333/readyz >/dev/null; then
+              echo "Qdrant ready after ${i} attempt(s)."
+              exit 0
+            fi
+            echo "Qdrant not ready yet (attempt ${i}/30); sleeping 2s..."
+            sleep 2
+          done
+          echo "Qdrant did not become ready within 60s." >&2
+          exit 1
+
+      - name: Run live database isolation checks
+        env:
+          RAG_REQUIRE_LIVE_STORES: "1"
+          VECTOR_STORE: "qdrant"
+          PG_DSN: "postgresql://rag:rag@localhost:5432/rag"
+          QDRANT_URL: "http://localhost:6333"
+        run: |
+          uv run pytest tests/test_stores_acl.py tests/test_multitenant_isolation.py tests/test_ingest_worker.py -v
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Status Gate required check (job name kept stable for branch protection)
+  # ---------------------------------------------------------------------------
+  eval-gate-status:
+    name: Gated Status Check
+    runs-on: ubuntu-latest
+    needs: [lint, acl-isolation]
+    if: always()
+    steps:
+      - name: Check overall gate status
+        env:
+          LINT_STATUS: ${{ needs.lint.result }}
+          ACL_STATUS: ${{ needs.acl-isolation.result }}
+        run: |
+          echo "Lint job status: $LINT_STATUS"
+          echo "ACL job status: $ACL_STATUS"
+          if [ "$LINT_STATUS" != "success" ]; then
+            echo "Error: Lint & Offline Tests did not succeed."
+            exit 1
+          fi
+          if [ "$ACL_STATUS" != "success" ]; then
+            echo "Error: Live Database ACL Isolation Tests did not succeed."
+            exit 1
+          fi
+          echo "All required checks passed."

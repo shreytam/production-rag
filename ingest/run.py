@@ -94,6 +94,22 @@ def _apply_pii_ingest_policy(
         return docs, []
 
 
+def _chunk_documents(docs: list[Document], settings: Settings) -> list[Chunk]:
+    """Chunk every document using the token budget from Settings, so a config
+    change (chunk_max_tokens / chunk_overlap) actually changes the chunks this
+    CLI path produces, same as the API/worker path."""
+    from ingest.chunking import chunk_document
+
+    chunks: list[Chunk] = []
+    for doc in docs:
+        chunks.extend(chunk_document(
+            doc,
+            max_tokens=settings.chunk_max_tokens,
+            overlap=settings.chunk_overlap,
+        ))
+    return chunks
+
+
 def _process_pdf(
     pdf_path: Path,
     *,
@@ -132,11 +148,7 @@ def _process_pdf(
     # Fail closed on PII policy errors.
     clean_docs, _ = _apply_pii_ingest_policy(docs, settings, detector, audit)
 
-    from ingest.chunking import chunk_document
-
-    chunks: list[Chunk] = []
-    for doc in clean_docs:
-        chunks.extend(chunk_document(doc))
+    chunks = _chunk_documents(clean_docs, settings)
 
     if settings.pii_mode == "keep":
         for ch in chunks:

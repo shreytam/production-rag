@@ -116,3 +116,58 @@ def test_delete_cross_tenant_is_404(client):
     from app.auth import require_principal
     app.dependency_overrides[require_principal] = lambda: Principal(tenant_id="other")
     assert client.delete(f"/documents/{did}").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The real arq enqueuer
+#
+# Every test above overrides get_enqueuer with a fake, so the production path
+# was never exercised. These drive _build_arq_enqueuer itself with only the
+# Redis pool faked out.
+# ---------------------------------------------------------------------------
+
+
+async def test_arq_enqueuer_passes_redis_settings_without_calling_it(monkeypatch):
+    """WorkerSettings.redis_settings is a concrete RedisSettings attribute, not a
+    factory — arq copies it out of the class __dict__ rather than calling it (see
+    ingest/worker.py). Invoking it raises TypeError and 500s every upload."""
+    import arq
+    from arq.connections import RedisSettings
+
+    captured = {}
+
+    class _FakePool:
+        async def enqueue_job(self, fn, document_id):
+            captured["job"] = (fn, document_id)
+
+    async def _fake_create_pool(settings):
+        captured["settings"] = settings
+        return _FakePool()
+
+    monkeypatch.setattr(arq, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(docs_mod, "_pool", None)
+
+    enqueue = docs_mod._build_arq_enqueuer()
+    await enqueue("doc-1")
+
+    assert isinstance(captured["settings"], RedisSettings)
+    assert captured["job"] == ("ingest_document", "doc-1")
+
+
+async def test_arq_enqueuer_maps_delete_action(monkeypatch):
+    import arq
+
+    captured = {}
+
+    class _FakePool:
+        async def enqueue_job(self, fn, document_id):
+            captured["job"] = (fn, document_id)
+
+    async def _fake_create_pool(settings):
+        return _FakePool()
+
+    monkeypatch.setattr(arq, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(docs_mod, "_pool", None)
+
+    await docs_mod._build_arq_enqueuer()("doc-2", "delete")
+    assert captured["job"] == ("delete_document", "doc-2")

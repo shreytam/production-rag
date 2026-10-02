@@ -5,6 +5,7 @@ No model downloads. No network calls.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,9 @@ import pytest
 from core.types import Chunk, RetrievalSource, ScoredChunk
 from providers.rerankers.local_cross_encoder import LocalCrossEncoderReranker
 from providers.rerankers.nim_rerank import NIMReranker
+
+if TYPE_CHECKING:
+    from providers.rerankers.openrouter_rerank import OpenRouterReranker
 
 
 # ---------------------------------------------------------------------------
