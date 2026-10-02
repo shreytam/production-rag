@@ -7,17 +7,37 @@ claims are supported by the retrieved contexts.
 
 from __future__ import annotations
 
+import itertools
+import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FTimeout
 
 from generation.metrics import faithfulness
 from core.interfaces import Generator
 from core.types import GuardrailAction, GuardrailResult
 
+logger = logging.getLogger(__name__)
+
+_MAX_WORKERS = 4
 # Module-level, bounded pool. A with-block executor would join on __exit__ and
 # defeat the timeout, so we submit here and ABANDON the future on timeout (the
 # call finishes in the background — a bounded thread + double cost for that
 # request — because a running future cannot be cancelled).
-_GROUNDEDNESS_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="groundedness")
+_GROUNDEDNESS_POOL = ThreadPoolExecutor(
+    max_workers=_MAX_WORKERS, thread_name_prefix="groundedness"
+)
+# One slot per worker thread, held until the worker FINISHES (even if the caller
+# timed out). A slot therefore always has a free thread: no queue wait inflates
+# the timeout, and a saturated pool is shed immediately instead of queueing.
+_GROUNDEDNESS_SLOTS = threading.BoundedSemaphore(_MAX_WORKERS)
+_UNVERIFIED_COUNTER = itertools.count(1)
+
+
+def _run_with_slot(slots: threading.BoundedSemaphore, **kwargs) -> float | None:
+    try:
+        return faithfulness(**kwargs)
+    finally:
+        slots.release()
 
 
 class GroundednessGuardrail:
@@ -63,24 +83,38 @@ class GroundednessGuardrail:
                 score=None,
             )
 
-        question = context.get("question", "")
-        fut = _GROUNDEDNESS_POOL.submit(
-            faithfulness,
-            question=question,
-            answer=text,
-            contexts=contexts,
-            generator=self._generator,
-        )
-        try:
-            score = fut.result(timeout=self._timeout_seconds)
-        except FTimeout:
+        # A refusal makes no factual claims to verify.
+        if answer is not None and answer.refused:
             return GuardrailResult(
                 name=self.name,
                 action=GuardrailAction.PASS,
-                reason="groundedness check timed out",
-                metadata={"groundedness_unverified": True},
+                reason="Answer is a refusal; skipping groundedness check.",
+                score=None,
             )
 
+        question = context.get("question", "")
+        slots = _GROUNDEDNESS_SLOTS
+        if not slots.acquire(blocking=False):
+            return self._unverified("saturated")
+        try:
+            fut = _GROUNDEDNESS_POOL.submit(
+                _run_with_slot,
+                slots,
+                question=question,
+                answer=text,
+                contexts=contexts,
+                generator=self._generator,
+            )
+        except BaseException:
+            slots.release()
+            raise
+        try:
+            score = fut.result(timeout=self._timeout_seconds)
+        except FTimeout:
+            return self._unverified("timeout")
+
+        if score is None:
+            return self._unverified("judge_unparseable")
         if score < self.threshold:
             return GuardrailResult(
                 name=self.name,
@@ -89,3 +123,20 @@ class GroundednessGuardrail:
                 score=score,
             )
         return GuardrailResult(name=self.name, action=GuardrailAction.PASS, score=score)
+
+    def _unverified(self, reason: str) -> GuardrailResult:
+        """PASS but loudly: log + counter so fail-open is observable."""
+        total = next(_UNVERIFIED_COUNTER)
+        logger.warning(
+            "groundedness unverified (reason=%s, total_unverified=%d)", reason, total
+        )
+        return GuardrailResult(
+            name=self.name,
+            action=GuardrailAction.PASS,
+            reason=f"groundedness unverified: {reason}",
+            metadata={
+                "groundedness_unverified": True,
+                "unverified_reason": reason,
+                "unverified_total": total,
+            },
+        )

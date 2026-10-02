@@ -289,7 +289,15 @@ class RAGPipeline:
                         },
                     )
                     guard_log["output"] = [r.model_dump() for r in out_results]
-                    s_out.update(output={"actions": [r.action.value for r in out_results]})
+                    s_out.update(
+                        output={
+                            "actions": [r.action.value for r in out_results],
+                            "groundedness_unverified": any(
+                                r.metadata.get("groundedness_unverified")
+                                for r in out_results
+                            ),
+                        }
+                    )
                     ans.text = self.guardrails.apply_redactions(ans.text, out_results)
                     
                     # Scrub metadata duplicate structured_output answer if redactions took place
