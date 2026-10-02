@@ -37,3 +37,19 @@ def test_qdrant_point_id_includes_tenant():
     assert _chunk_uuid("a", "d::0") == _chunk_uuid("a", "d::0")
 
 
+# --- defect 1: ACL / collection change on re-ingest -------------------------
+
+def test_reingest_with_new_acl_tags_and_collection_updates_everything(tmp_path):
+    store, sparse = InMemoryVectorStore(), BM25Retriever()
+    ing = _ing(tmp_path, store, sparse)
+    ing.ingest_document("t1", "d1", [_c()], ACLContext(tenant_id="t1"))
+    assert store.chunks[0].acl_tags == ()
+    ing.ingest_document("t1", "d1", [_c(tags=("finance",), coll="C")],
+                        ACLContext(tenant_id="t1", acl_tags=("finance",)))
+    assert len(store.chunks) == 1
+    assert store.chunks[0].acl_tags == ("finance",)
+    assert store.chunks[0].collection_id == "C"
+    sp = sparse.snapshot("t1")
+    assert len(sp) == 1 and sp[0].acl_tags == ("finance",) and sp[0].collection_id == "C"
+    # an anonymous caller must no longer see it
+    assert sparse.search("alpha", 5, ACLContext(tenant_id="t1")) == []

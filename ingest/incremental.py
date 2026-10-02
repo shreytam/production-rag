@@ -25,8 +25,20 @@ def _hash(text: str) -> str:
 
 
 def _meta_hash(chunk: Chunk) -> str:
-    key = f"{chunk.title}:{chunk.tenant_id}:{sorted(chunk.acl_tags)}"
+    key = (f"{chunk.title}:{chunk.tenant_id}:{sorted(chunk.acl_tags)}:"
+           f"{chunk.collection_id}")
     return _hash(key)
+
+
+def _meta_payload(chunk: Chunk) -> dict:
+    """Every payload field derived from chunk metadata (must mirror
+    qdrant_store._payload_from_chunk), so a meta-only change is fully applied."""
+    return {
+        "title": chunk.title,
+        "collection_id": chunk.collection_id,
+        "acl_tags": list(chunk.acl_tags),
+        "acl_open": not bool(chunk.acl_tags),
+    }
 
 
 class IncrementalIngestor:
@@ -61,6 +73,7 @@ class IncrementalIngestor:
             new_records: dict[str, ChunkRecord] = {}
             to_embed: list[Chunk] = []
             to_meta: dict[str, dict] = {}
+            meta_chunks: list[Chunk] = []
 
             for c in chunks:
                 e_hash = _hash(c.embed_text)
@@ -73,7 +86,8 @@ class IncrementalIngestor:
                 if prev is None or prev.embed_hash != e_hash:
                     to_embed.append(c)
                 elif prev.meta_hash != m_hash:
-                    to_meta[c.chunk_id] = {"title": c.title}
+                    to_meta[c.chunk_id] = _meta_payload(c)
+                    meta_chunks.append(c)
 
             to_delete = [cid for cid in old_chunks if cid not in new_records]
 
@@ -99,6 +113,9 @@ class IncrementalIngestor:
                 self._sparse.add(embedded)
             if to_meta:
                 self._store.update_metadata(to_meta, acl)
+                # add() replaces in place by chunk_id, so the sparse copy
+                # picks up the new ACL/collection too.
+                self._sparse.add(meta_chunks)
             if to_delete:
                 self._store.delete(to_delete, acl)
                 self._sparse.delete(to_delete, acl)
