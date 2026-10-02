@@ -17,6 +17,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 
+_PLACEHOLDER_JWT_SECRETS = {"change-me-dev-secret", "dev-console-secret-not-for-production!"}
+
+
 class Settings(BaseSettings):
     # Load from the repo-root .env first, then infra/.env (where .env.example lives,
     # a natural place to drop the key). Later files override earlier ones, so a
@@ -46,6 +49,7 @@ class Settings(BaseSettings):
     # --- Vector store: one switch ---
     vector_store: Literal["qdrant"] = "qdrant"
     qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""  # empty = no auth (local/CI); compose sets one
     qdrant_collection: str = "rag_chunks"
     pg_dsn: str = "postgresql://rag:rag@localhost:5432/rag"
 
@@ -131,6 +135,7 @@ class Settings(BaseSettings):
     jwt_leeway_seconds: int = 60
     acl_allowlist_source: str = ""  # empty = NullAllowlist; path = StaticAllowlist JSON
     auth_dev_signer_enabled: bool = False
+    auth_dev_signer_allow_remote: bool = False  # /ui/token is loopback-only unless set
     max_question_chars: int = 8000
     max_acl_tags: int = 32
 
@@ -234,9 +239,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_auth(self) -> "Settings":
         """Prod instances must be securely configured — fail fast at construction."""
+        if self.app_env != "dev" and self.jwt_alg == "HS256":
+            if self.jwt_secret.lower().startswith("change-me") or self.jwt_secret in _PLACEHOLDER_JWT_SECRETS:
+                raise ValueError("jwt_secret is a known placeholder; set a real secret when app_env!=dev")
         if self.app_env == "prod":
             if self.jwt_alg == "HS256" and not self.jwt_secret:
                 raise ValueError("HS256 requires jwt_secret when app_env=prod")
+            if self.jwt_alg == "HS256" and len(self.jwt_secret.encode()) < 32:
+                raise ValueError("HS256 jwt_secret must be at least 32 bytes when app_env=prod")
             if self.jwt_alg == "RS256" and not self.jwks_url:
                 raise ValueError("RS256 requires jwks_url when app_env=prod")
             if not self.jwt_issuer or not self.jwt_audience:
