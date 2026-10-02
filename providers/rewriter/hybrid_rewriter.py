@@ -22,6 +22,9 @@ from core.types import ACLContext, ChatMessage
 
 logger = logging.getLogger(__name__)
 
+# Rewriting is best-effort on the hot path: never let Redis stall a query.
+_REDIS_SOCKET_TIMEOUT = 1.5
+
 _SYSTEM = (
     "You are an expert search assistant. Rewrite the user's query to maximize "
     "retrieval matching. Return a single descriptive search statement. Keep "
@@ -56,7 +59,11 @@ class HybridQueryRewriter:
             try:
                 import redis  # lazy: keeps this module offline-safe
 
-                self._client = redis.from_url(self._redis_url)
+                self._client = redis.from_url(
+                    self._redis_url,
+                    socket_timeout=_REDIS_SOCKET_TIMEOUT,
+                    socket_connect_timeout=_REDIS_SOCKET_TIMEOUT,
+                )
             except Exception as exc:  # pragma: no cover - infra path
                 logger.warning("rewriter: redis client init failed: %s", exc)
                 return None

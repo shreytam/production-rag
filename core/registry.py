@@ -25,6 +25,19 @@ from core.interfaces import Embedder, Generator, ManifestStore, QueryRewriter, R
 GeneratorRole = Literal["gen", "context", "judge"]
 
 
+def for_query_path(settings: Settings | None = None) -> Settings:
+    """Settings copy whose HTTP timeout/retry knobs are the bounded query-time
+    values. Pass it to the builders of every client used while serving a query;
+    ingest-time clients keep using the generous `request_timeout_seconds`."""
+    s = settings or get_settings()
+    return s.model_copy(
+        update={
+            "request_timeout_seconds": s.query_request_timeout_seconds,
+            "max_retries": s.query_max_retries,
+        }
+    )
+
+
 def build_embedder(settings: Settings | None = None) -> Embedder:
     s = settings or get_settings()
     from providers.embedders.openai_compatible import OpenAICompatibleEmbedder
@@ -117,7 +130,12 @@ def build_generator(role: GeneratorRole = "gen", settings: Settings | None = Non
             "context": s.anthropic_context_model,
             "judge": s.anthropic_judge_model,
         }[role]
-        return AnthropicGenerator(model, s.anthropic_api_key)
+        return AnthropicGenerator(
+            model,
+            s.anthropic_api_key,
+            timeout=s.request_timeout_seconds,
+            max_retries=s.max_retries,
+        )
     raise ValueError(f"Unknown provider for role {role}: {provider}")
 
 

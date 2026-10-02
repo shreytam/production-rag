@@ -20,6 +20,7 @@ from core.registry import (
     build_embedder,
     build_generator,
     build_reranker,
+    for_query_path,
     build_vector_store,
 )
 from core.types import ACLContext, Answer, Query
@@ -404,9 +405,12 @@ def build(
     call sites; callers may drop it in a future cleanup.
     """
     s = settings or get_settings()
-    embedder = build_embedder(s)
+    # Everything built here serves queries: bounded timeouts/retries (not the
+    # generous ingest-time ones).
+    qs = for_query_path(s)
+    embedder = build_embedder(qs)
     store = build_vector_store(s)
-    generator = build_generator("gen", s)
+    generator = build_generator("gen", qs)
     grounded = GroundedGenerator(generator, token_budget=s.context_token_budget, settings=s)
 
     if version == "baseline":
@@ -435,7 +439,7 @@ def build(
         from core.registry import build_query_rewriter
         # Build the cheap 'context' generator through the module-level seam so
         # tests that stub build_generator stay offline.
-        rewriter = build_query_rewriter(s, generator=build_generator("context", s))
+        rewriter = build_query_rewriter(s, generator=build_generator("context", qs))
 
     return RAGPipeline(retriever, grounded, s, guardrails=guardrails,
                        embedder=embedder, answer_cache=answer_cache,
