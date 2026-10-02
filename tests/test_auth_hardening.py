@@ -25,6 +25,7 @@ def _prod(**kw):
         jwt_secret=SECRET,
         jwt_issuer="iss",
         jwt_audience="aud",
+        pii_detector="presidio",  # prod requires presidio (#33)
     )
     base.update(kw)
     return Settings(_env_file=None, **base)
