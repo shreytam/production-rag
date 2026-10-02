@@ -150,8 +150,22 @@ class RAGPipeline:
             retrieval_question = question
             if self.rewriter is not None:
                 with self.tracer.span("rewrite") as s_rw:
-                    retrieval_question = self.rewriter.rewrite(question, acl)
-                    s_rw.update(output={"rewritten": retrieval_question != question})
+                    rewrite_failed = False
+                    try:
+                        retrieval_question = self.rewriter.rewrite(question, acl)
+                    except Exception:
+                        # Fail-soft: a rewriter fault must never 500 the query.
+                        logger.warning(
+                            "rewriter failed; using original question", exc_info=True
+                        )
+                        retrieval_question = question
+                        rewrite_failed = True
+                    s_rw.update(
+                        output={
+                            "rewritten": retrieval_question != question,
+                            "rewrite_failed": rewrite_failed,
+                        }
+                    )
 
             # --- Semantic cache: answer tier -----------------------------------
             cache_on = self.answer_cache is not None or self.retrieval_cache is not None

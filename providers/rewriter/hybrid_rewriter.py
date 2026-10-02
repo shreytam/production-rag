@@ -81,7 +81,7 @@ class HybridQueryRewriter:
         for shortcut, full in sorted(syns.items(), key=lambda kv: -len(kv[0])):
             pattern = re.compile(rf"\b{re.escape(shortcut)}\b", re.IGNORECASE)
             if pattern.search(rewritten):
-                rewritten = pattern.sub(full, rewritten)
+                rewritten = pattern.sub(lambda _m, _full=full: _full, rewritten)
                 replaced = True
 
         if self._llm_enabled and not replaced and len(query.split()) >= self._llm_threshold:

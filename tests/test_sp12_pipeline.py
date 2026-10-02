@@ -50,3 +50,15 @@ def test_no_rewriter_is_passthrough():
     p.answer("plain question", ACLContext(tenant_id="t1"))
     assert ret.query_text == "plain question"
     assert gen.gen_question == "plain question"
+
+
+def test_rewriter_exception_falls_back_to_original_question():
+    class BoomRewriter:
+        def rewrite(self, query, acl):
+            raise RuntimeError("boom")
+
+    ret, gen = SpyRetriever(), SpyGrounded()
+    p = RAGPipeline(ret, gen, Settings(), guardrails=None, embedder=None, rewriter=BoomRewriter())
+    ans = p.answer("original question here", ACLContext(tenant_id="t1"))
+    assert ret.query_text == "original question here"
+    assert ans.text == "ok"

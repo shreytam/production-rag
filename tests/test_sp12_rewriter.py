@@ -25,6 +25,12 @@ def test_synonym_substitution_word_boundary():
     assert rw.rewrite("NYPDX status", _acl("t1")) == "NYPDX status"
 
 
+def test_synonym_value_is_literal_not_regex_template():
+    r = FakeRedis({"rewriter:synonyms:t1": {"NYPD": r"police \1 \g<x>"}})
+    rw = HybridQueryRewriter(RecordingGenerator(), "redis://x", llm_enabled=False, redis_client=r)
+    assert rw.rewrite("who leads NYPD?", _acl("t1")) == r"who leads police \1 \g<x>?"
+
+
 def test_tenant_synonym_isolation():
     r = FakeRedis({"rewriter:synonyms:t2": {"Jupiter": "Jupiter-Next"}})
     rw = HybridQueryRewriter(RecordingGenerator(), "redis://x", llm_enabled=False, redis_client=r)
