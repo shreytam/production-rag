@@ -21,12 +21,12 @@ class AnswerSchema(BaseModel):
 
 # ─── Helpers for building fake SDK responses ────────────────────────────────
 
-def _make_embedding_item(vector: list[float]) -> types.SimpleNamespace:
-    return types.SimpleNamespace(embedding=vector)
+def _make_embedding_item(vector: list[float], index: int = 0) -> types.SimpleNamespace:
+    return types.SimpleNamespace(embedding=vector, index=index)
 
 
 def _make_embeddings_response(vectors: list[list[float]]) -> types.SimpleNamespace:
-    return types.SimpleNamespace(data=[_make_embedding_item(v) for v in vectors])
+    return types.SimpleNamespace(data=[_make_embedding_item(v, i) for i, v in enumerate(vectors)])
 
 
 def _make_openai_chat_response(

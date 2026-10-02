@@ -180,6 +180,13 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     redis_password: str = ""
     ingest_queue_name: str = "ingest"
+    # arq job budget; a SIGKILLed/OOM job is retried up to max_tries times.
+    ingest_job_timeout_seconds: int = 900
+    ingest_max_tries: int = 3
+    # Rows stuck in PROCESSING/DELETING longer than this are swept to FAILED.
+    # Must exceed job_timeout * max_tries so live retries are never swept.
+    ingest_stale_after_seconds: int = 3600
+    ingest_sweep_interval_minutes: int = 5
 
     # --- Semantic cache (Redis 8 / redis-vl; opt-in) ---
     cache_enabled: bool = False

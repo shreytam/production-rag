@@ -151,6 +151,8 @@ def _process_pdf(
     clean_docs, _ = _apply_pii_ingest_policy(docs, settings, detector, audit)
 
     chunks = _chunk_documents(clean_docs, settings)
+    if not chunks:
+        raise ValueError(f"no extractable text in {pdf_path.name}")
 
     if settings.pii_mode == "keep":
         for ch in chunks:

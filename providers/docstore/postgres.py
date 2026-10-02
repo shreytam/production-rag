@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from core.types import DocumentRecord, DocumentStatus
 
 _DDL = """
@@ -71,6 +73,17 @@ class PostgresDocumentRegistry:
                 f"SELECT document_id, tenant_id, filename, content_type, size_bytes, "
                 f"status, blob_key, collection_id, error, chunk_count FROM {self._table} "
                 f"WHERE tenant_id=%s ORDER BY created_at DESC", [tenant_id])
+            rows = cur.fetchall()
+        return [self._row(r) for r in rows]
+
+    def list_stale(self, statuses: tuple[DocumentStatus, ...],
+                   older_than: timedelta) -> list[DocumentRecord]:
+        with self._conn() as c, c.cursor() as cur:
+            cur.execute(
+                f"SELECT document_id, tenant_id, filename, content_type, size_bytes, "
+                f"status, blob_key, collection_id, error, chunk_count FROM {self._table} "
+                f"WHERE status = ANY(%s) AND updated_at <= now() - %s",
+                [[s.value for s in statuses], older_than])
             rows = cur.fetchall()
         return [self._row(r) for r in rows]
 

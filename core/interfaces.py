@@ -8,6 +8,7 @@ do not change a signature without updating the registry and every implementor.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -187,6 +188,11 @@ class DocumentRegistry(Protocol):
     def create(self, record: "DocumentRecord") -> None: ...
     def get(self, document_id: str, tenant_id: str) -> "DocumentRecord | None": ...
     def list(self, tenant_id: str) -> "list[DocumentRecord]": ...
+    def list_stale(self, statuses: "tuple[DocumentStatus, ...]",
+                   older_than: "timedelta") -> "list[DocumentRecord]":
+        """Rows in any of `statuses` not updated for `older_than` (tenant-unscoped,
+        for the worker's stuck-job sweeper)."""
+        ...
     def set_status(self, document_id: str, tenant_id: str, status: "DocumentStatus",
                    *, error: str = "", chunk_count: int = 0) -> None: ...
 
