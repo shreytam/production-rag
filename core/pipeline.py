@@ -42,6 +42,11 @@ OUTPUT_BLOCK_MESSAGE = (
 )
 
 
+NO_DOCUMENTS_MESSAGE = (
+    "No relevant documents found for this question, so I can't provide an answer."
+)
+
+
 def _dedup(ids: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -257,7 +262,12 @@ class RAGPipeline:
                 as_type="generation",
                 model=self.settings.gen_model,
             ) as s_gen:
-                ans, ms = timed(self.grounded.generate)(question, scored)
+                if scored:
+                    ans, ms = timed(self.grounded.generate)(question, scored)
+                else:
+                    # Nothing retrieved: never ask the LLM to answer from no
+                    # context (hallucination risk, esp. with guardrails off).
+                    ans, ms = Answer(text=NO_DOCUMENTS_MESSAGE, refused=True), 0.0
                 latencies["generation_ms"] = ms
                 s_gen.update(
                     input={"question": question, "n_context_chunks": len(ans.contexts)},
@@ -285,7 +295,8 @@ class RAGPipeline:
                         context={
                             "question": question,
                             "context_chunk_ids": {sc.chunk_id for sc in ans.contexts},
-                            "contexts": [sc.chunk.text for sc in ans.contexts],
+                            # Same text the generator saw (contextual prefix + body).
+                            "contexts": [sc.chunk.embed_text for sc in ans.contexts],
                             # GeneratedAnswer-shaped dict for the SchemaGuardrail.
                             "candidate": ans.metadata.get("structured_output", {}),
                         },
