@@ -224,7 +224,7 @@ Protocol implementation bound to its own redis-vl index:
 Both tiers key on **semantic** similarity — a cosine-distance vector search on
 the embedded (redacted) query, not exact string match — so paraphrased repeat
 questions still hit. `core/config.py` knobs: `cache_enabled`,
-`cache_similarity_threshold` (default `0.9`), `cache_ttl_seconds` (default
+`cache_similarity_threshold` (default `0.97`), `cache_ttl_seconds` (default
 `3600`).
 
 **Backend:** `cache/_redisvl_backend.py` (`RedisVLSemanticCache`) is the only

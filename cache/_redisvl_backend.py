@@ -3,7 +3,7 @@ lazily inside method bodies — constructing an instance requires neither Redis 
 the redis-vl package, so build_cache stays importable in the offline suite.
 
 Schema per tier (one RediSearch index): a COSINE vector field plus tenant_id,
-collection_id and doc_ids TAG fields and a cache_payload text field (NOT named
+collection_id, acl_key and doc_ids TAG fields and a cache_payload text field (NOT named
 "payload" — that word is a reserved keyword arg on redis-py's search Document and
 collides at result-parse time). The doc_ids TAG is
 the reverse index that makes per-document eviction a filtered delete. Per-key TTL
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from cache.semantic_cache import norm_collection
+from cache.semantic_cache import acl_key, norm_collection
 
 
 class RedisVLSemanticCache:
@@ -35,6 +35,7 @@ class RedisVLSemanticCache:
             "fields": [
                 {"name": "tenant_id", "type": "tag"},
                 {"name": "collection_id", "type": "tag"},
+                {"name": "acl_key", "type": "tag"},
                 {"name": "doc_ids", "type": "tag", "attrs": {"separator": "|"}},
                 {"name": "cache_payload", "type": "text"},
                 {"name": "vector", "type": "vector", "attrs": {
@@ -51,13 +52,14 @@ class RedisVLSemanticCache:
         # redis-vl ranges cosine DISTANCE in [0, 2]; distance = 1 - similarity.
         return 1.0 - float(self.settings.cache_similarity_threshold)
 
-    def lookup(self, *, tenant_id, collection_id, embedding) -> dict | None:
+    def lookup(self, *, tenant_id, collection_id, acl_tags, embedding) -> dict | None:
         from redisvl.query import VectorQuery
         from redisvl.query.filter import Tag
 
         index = self._get_index()
         flt = (Tag("tenant_id") == tenant_id) & \
-              (Tag("collection_id") == norm_collection(collection_id))
+              (Tag("collection_id") == norm_collection(collection_id)) & \
+              (Tag("acl_key") == acl_key(acl_tags))
         q = VectorQuery(vector=list(embedding), vector_field_name="vector",
                         return_fields=["cache_payload", "vector_distance"], num_results=1,
                         filter_expression=flt)
@@ -69,7 +71,8 @@ class RedisVLSemanticCache:
             return None
         return json.loads(top["cache_payload"])
 
-    def store(self, *, tenant_id, collection_id, embedding, payload, doc_ids) -> None:
+    def store(self, *, tenant_id, collection_id, acl_tags, embedding, payload,
+              doc_ids) -> None:
         import numpy as np
 
         index = self._get_index()
@@ -77,6 +80,7 @@ class RedisVLSemanticCache:
         data = {
             "tenant_id": tenant_id,
             "collection_id": norm_collection(collection_id),
+            "acl_key": acl_key(acl_tags),
             "doc_ids": "|".join(doc_ids) if doc_ids else "",
             "cache_payload": json.dumps(payload),
             "vector": vec,

@@ -165,7 +165,8 @@ class RAGPipeline:
                         s_emb.update(dim=len(key_vec), purpose="cache_key")
             if key_vec is not None and self.answer_cache is not None:
                 hit = self.answer_cache.lookup(
-                    tenant_id=acl.tenant_id, collection_id=collection_id, embedding=key_vec)
+                    tenant_id=acl.tenant_id, collection_id=collection_id,
+                    acl_tags=acl.acl_tags, embedding=key_vec)
                 if hit is not None:
                     root.update(output={"cache": "answer_hit"})
                     cached = answer_from_payload(hit)
@@ -193,7 +194,8 @@ class RAGPipeline:
                 cache_status = "miss"
                 if key_vec is not None and self.retrieval_cache is not None:
                     rhit = self.retrieval_cache.lookup(
-                        tenant_id=acl.tenant_id, collection_id=collection_id, embedding=key_vec)
+                        tenant_id=acl.tenant_id, collection_id=collection_id,
+                        acl_tags=acl.acl_tags, embedding=key_vec)
                     if rhit is not None:
                         scored = scored_from_payload(rhit)
                         cache_status = "retrieval_hit"
@@ -204,7 +206,8 @@ class RAGPipeline:
                     if key_vec is not None and self.retrieval_cache is not None:
                         self.retrieval_cache.store(
                             tenant_id=acl.tenant_id, collection_id=collection_id,
-                            embedding=key_vec, payload=scored_to_payload(scored),
+                            acl_tags=acl.acl_tags, embedding=key_vec,
+                            payload=scored_to_payload(scored),
                             doc_ids=doc_ids_of(scored))
                 ret_output: dict[str, Any] = {
                     "n_hits": len(scored),
@@ -333,7 +336,7 @@ class RAGPipeline:
                 and ans.metadata.get("blocked_by") != "output_guardrail"):
             self.answer_cache.store(
                 tenant_id=acl.tenant_id, collection_id=collection_id,
-                embedding=key_vec, payload=answer_to_payload(ans),
+                acl_tags=acl.acl_tags, embedding=key_vec, payload=answer_to_payload(ans),
                 doc_ids=ans.metadata.get("retrieved_doc_ids", []))
         return ans
 

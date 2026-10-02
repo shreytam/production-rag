@@ -8,6 +8,7 @@ redis-vl package, so lint and the offline suite stay infra-free.
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Protocol, Sequence
 
 from core.types import Answer, ScoredChunk
@@ -23,12 +24,21 @@ def norm_collection(collection_id: str | None) -> str:
     return collection_id if collection_id else COLLECTION_NONE
 
 
+def acl_key(acl_tags: Sequence[str]) -> str:
+    """Stable partition key for a caller's ACL tag SET (order/duplicates ignored).
+    A cached answer/chunk list is only valid for callers whose tag set is identical
+    to the one that produced it. The empty set hashes a distinct marker."""
+    tags = sorted(set(acl_tags))
+    canon = "tags:" + "\x1f".join(tags) if tags else "no-tags"
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
 class SemanticCache(Protocol):
     def lookup(self, *, tenant_id: str, collection_id: str | None,
-               embedding: Sequence[float]) -> dict | None: ...
+               acl_tags: Sequence[str], embedding: Sequence[float]) -> dict | None: ...
 
     def store(self, *, tenant_id: str, collection_id: str | None,
-              embedding: Sequence[float], payload: dict,
+              acl_tags: Sequence[str], embedding: Sequence[float], payload: dict,
               doc_ids: Sequence[str]) -> None: ...
 
     def invalidate_document(self, *, tenant_id: str, collection_id: str | None,
@@ -68,6 +78,6 @@ def build_cache(settings: "Settings") -> tuple[SemanticCache, SemanticCache]:
     connect to Redis (the backend connects lazily on first use)."""
     from cache._redisvl_backend import RedisVLSemanticCache
 
-    answer = RedisVLSemanticCache(index_name="rag_cache_answer", settings=settings)
-    retrieval = RedisVLSemanticCache(index_name="rag_cache_retrieval", settings=settings)
+    answer = RedisVLSemanticCache(index_name="rag_cache_answer_v2", settings=settings)
+    retrieval = RedisVLSemanticCache(index_name="rag_cache_retrieval_v2", settings=settings)
     return answer, retrieval
