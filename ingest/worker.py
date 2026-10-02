@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -68,6 +69,10 @@ def run_ingest(deps: IngestDeps, document_id: str) -> None:
         logger.error("ingest: document %s not found", document_id)
         return
 
+    if rec.status == DocumentStatus.DELETING:
+        logger.info("ingest: document %s is being deleted; skipping", document_id)
+        return
+
     tenant_id = rec.tenant_id
     acl = ACLContext(tenant_id=tenant_id, acl_tags=())
     try:
@@ -94,7 +99,22 @@ def run_ingest(deps: IngestDeps, document_id: str) -> None:
                     audit.record(tenant_id=ch.tenant_id, doc_id=ch.doc_id,
                                  chunk_id=ch.chunk_id, text=ch.text, spans=spans)
 
+        if not chunks:
+            # Mirror UnstructuredParser: an empty document is a failure, never
+            # a READY document with zero chunks.
+            deps.registry.set_status(
+                document_id, tenant_id, DocumentStatus.FAILED,
+                error="no extractable text")
+            return
+
         n = deps.ingestor.ingest_document(tenant_id, document_id, chunks, acl)
+        cur = deps.registry.get_privileged(document_id)
+        if cur is None or cur.status == DocumentStatus.DELETING:
+            # A delete raced us while we were writing: it may already have run
+            # its purge, so remove what we just wrote instead of orphaning it.
+            deps.ingestor.delete_document(tenant_id, document_id, acl)
+            logger.info("ingest: %s deleted mid-flight; purged", document_id)
+            return
         deps.registry.set_status(document_id, tenant_id, DocumentStatus.READY, chunk_count=n)
         _invalidate_caches(deps, tenant_id, rec.collection_id, document_id)
     except Exception as e:  # fail-closed
@@ -122,6 +142,23 @@ def run_delete(deps: IngestDeps, document_id: str) -> None:
         logger.exception("delete failed for %s", document_id)
         deps.registry.set_status(document_id, tenant_id, DocumentStatus.FAILED,
                                  error=type(e).__name__)
+
+
+def sweep_stale_documents(deps: IngestDeps) -> int:
+    """Mark rows stuck in PROCESSING/DELETING (job killed by OOM/SIGKILL, so no
+    handler ever ran) as FAILED. Returns how many rows were swept."""
+    from datetime import timedelta
+
+    stale = deps.registry.list_stale(
+        (DocumentStatus.PROCESSING, DocumentStatus.DELETING),
+        timedelta(seconds=deps.settings.ingest_stale_after_seconds))
+    for rec in stale:
+        deps.registry.set_status(
+            rec.document_id, rec.tenant_id, DocumentStatus.FAILED,
+            error=f"stuck in {rec.status.value}; worker presumed lost")
+        logger.warning("swept stale document %s (was %s)", rec.document_id,
+                       rec.status.value)
+    return len(stale)
 
 
 def _build_deps(settings: Settings) -> IngestDeps:
@@ -156,7 +193,7 @@ async def ingest_document(ctx, document_id: str) -> None:
         from core.config import get_settings
         deps = _build_deps(get_settings())
         ctx["deps"] = deps
-    run_ingest(deps, document_id)
+    await asyncio.to_thread(run_ingest, deps, document_id)
 
 
 async def delete_document(ctx, document_id: str) -> None:
@@ -166,7 +203,17 @@ async def delete_document(ctx, document_id: str) -> None:
         from core.config import get_settings
         deps = _build_deps(get_settings())
         ctx["deps"] = deps
-    run_delete(deps, document_id)
+    await asyncio.to_thread(run_delete, deps, document_id)
+
+
+async def sweep_stale(ctx) -> int:
+    """arq cron entrypoint: fail rows whose job died without a handler."""
+    deps = ctx.get("deps")
+    if deps is None:
+        from core.config import get_settings
+        deps = _build_deps(get_settings())
+        ctx["deps"] = deps
+    return await asyncio.to_thread(sweep_stale_documents, deps)
 
 
 async def on_startup(ctx) -> None:
@@ -192,9 +239,11 @@ async def on_startup(ctx) -> None:
 
 
 try:
+    from arq import cron as _cron
     from arq.connections import RedisSettings as _RedisSettings
 except ModuleNotFoundError:  # arq ships in the 'app' extra; the base test env omits it
     _RedisSettings = None
+    _cron = None
 
 
 class WorkerSettings:
@@ -212,6 +261,15 @@ class WorkerSettings:
 
     functions = [ingest_document, delete_document]
     on_startup = on_startup
+    job_timeout = get_settings().ingest_job_timeout_seconds
+    max_tries = get_settings().ingest_max_tries
+    if _cron is not None:
+        cron_jobs = [_cron(
+            sweep_stale,
+            minute=set(range(0, 60, get_settings().ingest_sweep_interval_minutes)),
+            run_at_startup=True, unique=True)]
+    else:
+        cron_jobs = []
 
     if _RedisSettings is not None:
         redis_settings = _RedisSettings.from_dsn(get_settings().redis_url)

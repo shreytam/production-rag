@@ -53,7 +53,13 @@ class OpenAICompatibleEmbedder:
                 # model's max sequence length.
                 kwargs["extra_body"] = {"input_type": input_type, "truncate": "END"}
             response = self._client.embeddings.create(**kwargs)
-            results.extend(item.embedding for item in response.data)
+            # The API does not guarantee response order; `index` is the contract.
+            data = sorted(response.data, key=lambda item: item.index)
+            if len(data) != len(batch):
+                raise ValueError(
+                    f"embedding count mismatch: sent {len(batch)} inputs, "
+                    f"got {len(data)} vectors")
+            results.extend(item.embedding for item in data)
 
         return results
 

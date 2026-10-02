@@ -21,8 +21,10 @@ from retrieval.acl import qdrant_filter
 _NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
 
 
-def _chunk_uuid(chunk_id: str) -> str:
-    return str(uuid.uuid5(_NS, chunk_id))
+def _chunk_uuid(tenant_id: str, chunk_id: str) -> str:
+    """Point id is tenant-scoped so two tenants can never overwrite each
+    other's points, even if their chunk_ids collide."""
+    return str(uuid.uuid5(_NS, f"{tenant_id}\x00{chunk_id}"))
 
 
 def _payload_from_chunk(chunk: Chunk) -> dict[str, Any]:
@@ -94,6 +96,16 @@ class QdrantVectorStore:
             # Already exists — tolerate
             pass
 
+        # Payload index on doc_id for delete-by-document
+        try:
+            self._client.create_payload_index(
+                collection_name=self._collection,
+                field_name="doc_id",
+                field_schema=qm.PayloadSchemaType.KEYWORD,
+            )
+        except Exception:
+            pass
+
         # Payload index on collection_id for fast filtering
         try:
             self._client.create_payload_index(
@@ -113,7 +125,7 @@ class QdrantVectorStore:
                 raise ValueError(f"Chunk {chunk.chunk_id} has no embedding")
             points.append(
                 qm.PointStruct(
-                    id=_chunk_uuid(chunk.chunk_id),
+                    id=_chunk_uuid(chunk.tenant_id, chunk.chunk_id),
                     vector=chunk.embedding,
                     payload=_payload_from_chunk(chunk),
                 )
@@ -150,22 +162,58 @@ class QdrantVectorStore:
             )
         return scored
 
+    @staticmethod
+    def _tenant_cond(tenant_id: str) -> qm.FieldCondition:
+        return qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id))
+
     def delete(self, chunk_ids: list[str], acl: ACLContext) -> None:
-        """Delete points, scoped to the caller's ACL (tenant + tags)."""
+        """Delete points, scoped to the caller's tenant.
+
+        Deliberately tenant-scoped, NOT tag-scoped: ingest is a trusted write
+        path whose ACL carries no tags, and a tag filter would silently skip
+        restricted points (leaving them live)."""
         if not chunk_ids:
             return
-        ids = [_chunk_uuid(cid) for cid in chunk_ids]
-        combined = qm.Filter(must=[qm.HasIdCondition(has_id=ids), qdrant_filter(acl)])
+        ids = [_chunk_uuid(acl.tenant_id, cid) for cid in chunk_ids]
+        combined = qm.Filter(must=[qm.HasIdCondition(has_id=ids),
+                                   self._tenant_cond(acl.tenant_id)])
         self._client.delete(
             collection_name=self._collection,
             points_selector=qm.FilterSelector(filter=combined),
         )
 
+    def delete_by_doc(self, tenant_id: str, doc_id: str) -> list[str]:
+        """Delete every point of (tenant_id, doc_id) by payload filter, without
+        consulting any manifest. Returns the chunk_ids that were present."""
+        flt = qm.Filter(must=[
+            self._tenant_cond(tenant_id),
+            qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)),
+        ])
+        chunk_ids: list[str] = []
+        offset = None
+        while True:
+            points, offset = self._client.scroll(
+                collection_name=self._collection, scroll_filter=flt,
+                limit=256, offset=offset, with_payload=["chunk_id"],
+                with_vectors=False,
+            )
+            chunk_ids.extend(
+                p.payload["chunk_id"] for p in points
+                if p.payload and "chunk_id" in p.payload)
+            if offset is None:
+                break
+        self._client.delete(
+            collection_name=self._collection,
+            points_selector=qm.FilterSelector(filter=flt),
+        )
+        return chunk_ids
+
     def update_metadata(self, updates: dict[str, dict], acl: ACLContext) -> None:
-        """Patch point payloads, scoped to the caller's ACL (tenant + tags)."""
+        """Patch point payloads, scoped to the caller's tenant (see delete())."""
         for chunk_id, payload in updates.items():
-            pt = _chunk_uuid(chunk_id)
-            combined = qm.Filter(must=[qm.HasIdCondition(has_id=[pt]), qdrant_filter(acl)])
+            pt = _chunk_uuid(acl.tenant_id, chunk_id)
+            combined = qm.Filter(must=[qm.HasIdCondition(has_id=[pt]),
+                                       self._tenant_cond(acl.tenant_id)])
             self._client.set_payload(
                 collection_name=self._collection,
                 payload=payload,

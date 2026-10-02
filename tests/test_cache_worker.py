@@ -19,6 +19,7 @@ class _Rec:
     content_type: str = "text/plain"
     filename: str = "f.txt"
     blob_key: str = "acme/f"
+    status: str = "processing"
 
 
 class _Registry:
