@@ -68,3 +68,17 @@ class TestUnknownModelWarning:
 
         matching = [r for r in caplog.records if model in r.getMessage()]
         assert len(matching) == 1
+
+
+def test_haiku_45_priced_at_current_rate():
+    from observability.cost import cost_usd
+    assert cost_usd("claude-haiku-4-5-20251001", 1_000_000, 1_000_000) == 6.0
+
+
+def test_unpriced_models_are_counted():
+    from observability import cost
+    cost.UNPRICED_CALLS.clear()
+    assert cost.cost_usd("no/such-model", 10, 10) == 0.0
+    cost.cost_usd("no/such-model", 10, 10)
+    assert cost.UNPRICED_CALLS == {"no/such-model": 2}
+    assert cost.unpriced_call_count() == 2

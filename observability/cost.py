@@ -30,12 +30,24 @@ PRICING: dict[str, tuple[float, float]] = {
     "BAAI/bge-reranker-v2-m3": (0.00, 0.00),         # local reranker (CPU/GPU inference)
     # Anthropic models — estimate from public pricing page
     "claude-sonnet-4-6": (0.003, 0.015),             # ~$3/Mtok in, ~$15/Mtok out (estimate)
-    "claude-haiku-4-5-20251001": (0.00025, 0.00125), # ~$0.25/Mtok in, ~$1.25/Mtok out (estimate)
+    # Verified 2026-10-03: $1/Mtok in, $5/Mtok out
+    # (https://platform.claude.com/docs/en/about-claude/pricing). The old 0.00025/0.00125
+    # values were Claude 3 Haiku pricing.
+    "claude-haiku-4-5-20251001": (0.001, 0.005),
 }
 
 # Unknown model names we've already warned about — dedupe so a hot path doesn't
 # flood logs; warns exactly once per never-before-seen model name.
 _WARNED_UNKNOWN_MODELS: set[str] = set()
+
+# Calls priced at $0 because the model has no PRICING entry, by model name. Unlike
+# the warn-once log this counts every call, so undercounted spend is observable.
+UNPRICED_CALLS: dict[str, int] = {}
+
+
+def unpriced_call_count() -> int:
+    """Total calls costed as $0 because the model was missing from PRICING."""
+    return sum(UNPRICED_CALLS.values())
 
 
 def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -46,6 +58,7 @@ def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     of silently undercounting cost.
     """
     if model not in PRICING:
+        UNPRICED_CALLS[model] = UNPRICED_CALLS.get(model, 0) + 1
         if model not in _WARNED_UNKNOWN_MODELS:
             _WARNED_UNKNOWN_MODELS.add(model)
             logger.warning(
