@@ -87,34 +87,63 @@ def chunk_document(
     if overlap < 0:
         overlap = 0
 
+    sep_tokens = encoder.encode("\n\n")
+
+    def clean_start(tok: int) -> bool:
+        # A token whose first byte is a UTF-8 continuation byte begins in the
+        # middle of a multi-byte character; cutting there yields U+FFFD.
+        return (encoder.decode_single_token_bytes(tok)[0] & 0xC0) != 0x80
+
+    def aligned_tail(tokens: list[int]) -> list[int]:
+        tail = tokens[-overlap:] if overlap > 0 else []
+        while tail and not clean_start(tail[0]):
+            tail = tail[1:]
+        return tail
+
     chunks_tokens: list[list[int]] = []
     current_chunk: list[int] = []
+    fresh = False  # current_chunk holds only an overlap tail (no new content)
 
-    for para in paragraphs:
+    for p_idx, para in enumerate(paragraphs):
         para_tokens = encoder.encode(para)
         if not para_tokens:
             continue
+        if p_idx > 0:
+            # Without a separator, "end." + "Next" would fuse into "end.Next".
+            para_tokens = sep_tokens + para_tokens
 
         start_idx = 0
         while start_idx < len(para_tokens):
             space_left = max_tokens - len(current_chunk)
-            if space_left <= 0:
-                chunks_tokens.append(current_chunk)
-                prev_tail = current_chunk[-overlap:] if overlap > 0 else []
-                current_chunk = list(prev_tail)
-                space_left = max_tokens - len(current_chunk)
+            end = min(start_idx + space_left, len(para_tokens))
+            if space_left > 0 and end < len(para_tokens):
+                while end > start_idx and not clean_start(para_tokens[end]):
+                    end -= 1
+            if space_left <= 0 or end == start_idx:
+                if fresh:
+                    # Nothing fits next to the bare overlap tail: take the
+                    # whole character even if it overshoots by a few tokens.
+                    end = min(start_idx + max(space_left, 1), len(para_tokens))
+                    while end < len(para_tokens) and not clean_start(para_tokens[end]):
+                        end += 1
+                else:
+                    chunks_tokens.append(current_chunk)
+                    current_chunk = aligned_tail(current_chunk)
+                    fresh = True
+                    continue
 
-            chunk_slice = para_tokens[start_idx : start_idx + space_left]
+            chunk_slice = para_tokens[start_idx:end]
             current_chunk.extend(chunk_slice)
-            start_idx += len(chunk_slice)
+            start_idx = end
+            fresh = False
 
-    if current_chunk:
+    if current_chunk and not fresh:
         if not chunks_tokens or len(current_chunk) > overlap:
             chunks_tokens.append(current_chunk)
 
     chunks: list[Chunk] = []
-    for ordinal, tokens in enumerate(chunks_tokens):
-        text = encoder.decode(tokens)
+    texts = [t for t in (encoder.decode(tk).strip() for tk in chunks_tokens) if t]
+    for ordinal, text in enumerate(texts):
         chunk_id = f"{doc.doc_id}::{ordinal:06d}"
         chunks.append(
             Chunk(
