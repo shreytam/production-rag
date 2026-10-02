@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 
 from core.types import ACLContext, Chunk, ChunkRecord, DocManifest
 
+logger = logging.getLogger(__name__)
+
 _PROMPT_VERSION = "v1"
+_UPSERT_BATCH = 256
 
 _TRACER = None
 
@@ -91,40 +95,52 @@ class IncrementalIngestor:
 
             to_delete = [cid for cid in old_chunks if cid not in new_records]
 
-            if to_embed:
-                from core.config import get_settings
+            try:
+                if to_embed:
+                    from core.config import get_settings
 
-                # First-run bootstrap: create the collection if absent
-                # (idempotent). Dimension must match the embedder.
-                ensure = getattr(self._store, "ensure_collection", None)
-                if ensure is not None:
-                    ensure(get_settings().embed_dimension)
+                    # First-run bootstrap: create the collection if absent
+                    # (idempotent). Dimension must match the embedder.
+                    ensure = getattr(self._store, "ensure_collection", None)
+                    if ensure is not None:
+                        ensure(get_settings().embed_dimension)
 
-                with tracer.span(
-                    "ingest.embed_documents", as_type="embedding",
-                    model=get_settings().embed_model, n_chunks=len(to_embed),
-                ) as s_emb:
-                    vectors = self._embedder.embed_documents(
-                        [c.embed_text for c in to_embed])
-                    s_emb.update(n_chars=sum(len(c.embed_text) for c in to_embed))
-                embedded = [c.model_copy(update={"embedding": v})
-                            for c, v in zip(to_embed, vectors)]
-                self._store.upsert(embedded)
-                self._sparse.add(embedded)
-            if to_meta:
-                self._store.update_metadata(to_meta, acl)
-                # add() replaces in place by chunk_id, so the sparse copy
-                # picks up the new ACL/collection too.
-                self._sparse.add(meta_chunks)
-            if to_delete:
-                self._store.delete(to_delete, acl)
-                self._sparse.delete(to_delete, acl)
+                    with tracer.span(
+                        "ingest.embed_documents", as_type="embedding",
+                        model=get_settings().embed_model, n_chunks=len(to_embed),
+                    ) as s_emb:
+                        vectors = self._embedder.embed_documents(
+                            [c.embed_text for c in to_embed])
+                        s_emb.update(n_chars=sum(len(c.embed_text) for c in to_embed))
+                    embedded = [c.model_copy(update={"embedding": v})
+                                for c, v in zip(to_embed, vectors)]
+                    for i in range(0, len(embedded), _UPSERT_BATCH):
+                        self._store.upsert(embedded[i : i + _UPSERT_BATCH])
+                    self._sparse.add(embedded)
+                if to_meta:
+                    self._store.update_metadata(to_meta, acl)
+                    # add() replaces in place by chunk_id, so the sparse copy
+                    # picks up the new ACL/collection too.
+                    self._sparse.add(meta_chunks)
+                if to_delete:
+                    self._store.delete(to_delete, acl)
+                    self._sparse.delete(to_delete, acl)
 
-            # D-ORDER: manifest only after store writes succeed.
-            self._manifest.save(DocManifest(
-                tenant_id=tenant_id, doc_id=doc_id,
-                prompt_version=_PROMPT_VERSION, chunks=new_records,
-            ))
+                # D-ORDER: manifest only after store writes succeed.
+                self._manifest.save(DocManifest(
+                    tenant_id=tenant_id, doc_id=doc_id,
+                    prompt_version=_PROMPT_VERSION, chunks=new_records,
+                ))
+            except Exception:
+                if old is None:
+                    # New doc: no manifest means no retry will reconcile, so
+                    # best-effort remove whatever already landed.
+                    try:
+                        self._purge_doc(tenant_id, doc_id, acl, ())
+                    except Exception:
+                        logger.exception("cleanup after failed ingest of %s", doc_id)
+                raise
+
             s_doc.update(
                 embedded=len(to_embed),
                 meta_updated=len(to_meta),
@@ -133,18 +149,35 @@ class IncrementalIngestor:
             )
         return len(new_records)
 
+    def _purge_doc(self, tenant_id: str, doc_id: str, acl: ACLContext,
+                   known_chunk_ids) -> int:
+        """Remove a document from dense + sparse WITHOUT trusting the manifest:
+        dense by (tenant_id, doc_id) payload filter (returns the chunk_ids it
+        found), sparse by the union of those ids and any manifest-known ids.
+        Best-effort per store so one failure doesn't strand the other."""
+        ids = set(known_chunk_ids)
+        errors: list[Exception] = []
+        try:
+            ids |= set(self._store.delete_by_doc(tenant_id, doc_id))
+        except Exception as e:  # keep going: still purge sparse
+            errors.append(e)
+        if ids:
+            try:
+                self._sparse.delete(list(ids), acl)
+            except Exception as e:
+                errors.append(e)
+        if errors:
+            raise errors[0]
+        return len(ids)
+
     def delete_document(self, tenant_id: str, doc_id: str, acl: ACLContext) -> int:
         old = self._manifest.load(tenant_id, doc_id)
-        if old is None:
-            return 0
-        chunk_ids = list(old.chunks.keys())
-        if chunk_ids:
-            self._store.delete(chunk_ids, acl)
-            self._sparse.delete(chunk_ids, acl)
+        known = list(old.chunks.keys()) if old else []
+        n = self._purge_doc(tenant_id, doc_id, acl, known)
         self._manifest.delete(tenant_id, doc_id)
         with _get_tracer().span(
             "ingest.delete_document", as_type="span",
-            doc_id=doc_id, tenant_id=tenant_id, n_chunks=len(chunk_ids),
+            doc_id=doc_id, tenant_id=tenant_id, n_chunks=n,
         ):
             pass
-        return len(chunk_ids)
+        return n

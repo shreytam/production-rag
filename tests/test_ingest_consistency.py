@@ -53,3 +53,56 @@ def test_reingest_with_new_acl_tags_and_collection_updates_everything(tmp_path):
     assert len(sp) == 1 and sp[0].acl_tags == ("finance",) and sp[0].collection_id == "C"
     # an anonymous caller must no longer see it
     assert sparse.search("alpha", 5, ACLContext(tenant_id="t1")) == []
+
+
+# --- defect 3: orphans / manifest-independent delete -------------------------
+
+class _BoomSparse(BM25Retriever):
+    def add(self, chunks):
+        raise RuntimeError("sparse down")
+
+
+def test_failed_new_ingest_cleans_up_upserted_points(tmp_path):
+    import pytest
+    store = InMemoryVectorStore()
+    ing = _ing(tmp_path, store, _BoomSparse())
+    with pytest.raises(RuntimeError):
+        ing.ingest_document("t1", "d1", [_c()], ACLContext(tenant_id="t1"))
+    assert store.chunks == []
+
+
+def test_delete_document_without_manifest_removes_orphans(tmp_path):
+    store, sparse = InMemoryVectorStore(), BM25Retriever()
+    ing = _ing(tmp_path, store, sparse)
+    acl = ACLContext(tenant_id="t1")
+    ing.ingest_document("t1", "d1", [_c(), _c("d1::1", "beta", ordinal=1)], acl)
+    ing._manifest.delete("t1", "d1")  # simulate lost manifest
+    assert ing.delete_document("t1", "d1", acl) == 2
+    assert store.chunks == []
+    assert sparse.snapshot("t1") == []
+
+
+def test_delete_by_doc_is_tenant_scoped(tmp_path):
+    store = InMemoryVectorStore()
+    ing = _ing(tmp_path, store)
+    ing.ingest_document("t1", "d1", [_c()], ACLContext(tenant_id="t1"))
+    ing.ingest_document("t2", "d1", [_c(tenant="t2")], ACLContext(tenant_id="t2"))
+    ing.delete_document("t1", "d1", ACLContext(tenant_id="t1"))
+    assert [c.tenant_id for c in store.chunks] == ["t2"]
+
+
+# --- defect 6a: upsert batching ----------------------------------------------
+
+def test_upserts_are_batched(tmp_path):
+    from ingest import incremental
+    store = InMemoryVectorStore()
+    sizes = []
+    orig = store.upsert
+    store.upsert = lambda cs: (sizes.append(len(cs)), orig(cs))[1]
+    ing = _ing(tmp_path, store)
+    n = incremental._UPSERT_BATCH * 2 + 5
+    ing.ingest_document("t1", "d1",
+                        [_c(f"d1::{i}", f"w{i}", ordinal=i) for i in range(n)],
+                        ACLContext(tenant_id="t1"))
+    assert max(sizes) <= incremental._UPSERT_BATCH and len(sizes) == 3
+    assert len(store.chunks) == n
