@@ -44,6 +44,7 @@ def dev_signer_on(monkeypatch):
     config.get_settings.cache_clear()
     monkeypatch.setenv("AUTH_DEV_SIGNER_ENABLED", "true")
     monkeypatch.setenv("JWT_SECRET", UI_SECRET)
+    monkeypatch.setenv("AUTH_DEV_SIGNER_ALLOW_REMOTE", "true")  # TestClient host is "testclient"
     config.get_settings.cache_clear()
     yield
     config.get_settings.cache_clear()

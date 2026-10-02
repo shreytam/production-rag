@@ -65,6 +65,9 @@ class JWTVerifier:
         jwks_fetcher: Callable[[str], dict] | None = None,
         jwks_ttl_seconds: int = 3600,
     ) -> None:
+        if alg.startswith("HS") and not hs_secret:
+            # An empty HMAC key makes every token forgeable — refuse in ANY env.
+            raise ValueError("HMAC JWT verification requires a non-empty secret")
         self._alg = alg
         self._hs_secret = hs_secret
         self._issuer = issuer
@@ -97,7 +100,12 @@ class JWTVerifier:
 
     def verify(self, token: str) -> Principal:
         key = self._key_for(token)
-        options = {"require": ["exp"], "verify_aud": bool(self._audience)}
+        required = ["exp"]
+        if self._issuer:
+            required.append("iss")
+        if self._audience:
+            required.append("aud")
+        options = {"require": required, "verify_aud": bool(self._audience)}
         try:
             claims = jwt.decode(
                 token,
@@ -114,13 +122,18 @@ class JWTVerifier:
             raise AuthError("invalid token", status=401) from e
 
         tenant_id = claims.get("tenant_id")
-        if not tenant_id or not str(tenant_id).strip():
-            raise AuthError("missing tenant_id claim", status=403)
-        acl_tags = tuple(claims.get("acl_tags") or ())
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise AuthError("missing or malformed tenant_id claim", status=403)
+        raw_tags = claims.get("acl_tags")
+        if raw_tags is None:
+            raw_tags = []
+        if not isinstance(raw_tags, list) or not all(isinstance(t, str) for t in raw_tags):
+            raise AuthError("malformed acl_tags claim", status=403)
+        acl_tags = tuple(raw_tags)
         if len(acl_tags) > self._max_acl_tags:
             raise AuthError("token presents too many acl_tags", status=403)
         return Principal(
-            tenant_id=str(tenant_id),
+            tenant_id=tenant_id,
             acl_tags=acl_tags,
             subject=str(claims.get("sub", "")),
             claims=dict(claims),

@@ -16,7 +16,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -32,14 +32,20 @@ def _console_html() -> str:
     return _CONSOLE_HTML.read_text(encoding="utf-8")
 
 
-def _require_dev_signer():
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
+
+
+def _require_dev_signer(request: Request):
     """Return settings, or 404 if this instance must not mint dev tokens.
 
     404 rather than 403 so a locked-down deploy does not advertise that a
     console exists at all.
     """
     s = get_settings()
-    if not s.auth_dev_signer_enabled or not s.jwt_secret:
+    if not s.auth_dev_signer_enabled or not s.jwt_secret or s.app_env != "dev":
+        raise HTTPException(status_code=404, detail="Not Found")
+    host = request.client.host if request.client else None
+    if host not in _LOOPBACK_HOSTS and not s.auth_dev_signer_allow_remote:
         raise HTTPException(status_code=404, detail="Not Found")
     return s
 
@@ -50,20 +56,20 @@ class TokenRequest(BaseModel):
 
 
 @router.get("", response_class=HTMLResponse)
-def console() -> HTMLResponse:
-    _require_dev_signer()
+def console(request: Request) -> HTMLResponse:
+    _require_dev_signer(request)
     return HTMLResponse(_console_html())
 
 
 @router.post("/token")
-def mint_dev_token(body: TokenRequest) -> dict:
+def mint_dev_token(body: TokenRequest, request: Request) -> dict:
     """Mint a short-lived HS256 token for the console to send as a Bearer header.
 
     The console never sees the secret; it holds only the resulting token, and
     that token is verified by the same `require_principal` dependency as any
     other request.
     """
-    s = _require_dev_signer()
+    s = _require_dev_signer(request)
     from providers.auth.dev_signer import mint_token  # noqa: PLC0415
 
     token = mint_token(

@@ -68,7 +68,7 @@ class QdrantVectorStore:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._client = QdrantClient(url=settings.qdrant_url)
+        self._client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
         self._collection = settings.qdrant_collection
 
     def ensure_collection(self, dimension: int) -> None:
