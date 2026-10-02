@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FTimeout
 
-from eval.generation_metrics import faithfulness
+from generation.metrics import faithfulness
 from core.interfaces import Generator
 from core.types import GuardrailAction, GuardrailResult
 

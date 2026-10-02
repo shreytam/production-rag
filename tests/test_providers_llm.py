@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from pydantic import BaseModel
 
-from core.config import Settings
+from core.config import NIM_BASE_URL, Settings
 from core.types import ChatMessage
 
 
@@ -72,6 +72,7 @@ def _make_anthropic_text_response(
 class TestOpenAICompatibleEmbedder:
     def _make_settings(self, batch_size: int = 64) -> Settings:
         return Settings(
+            embed_base_url=NIM_BASE_URL,
             embed_api_key="test-key",
             embed_batch_size=batch_size,
             embed_dimension=1024,

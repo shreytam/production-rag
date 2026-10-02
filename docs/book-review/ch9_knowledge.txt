@@ -1,0 +1,1228 @@
+2 To illustrate the power of interconnected data, we encourage you to look at Wikidata Query Service, which
+demonstrates how KGs work. Wikidata is a massive, collaborative knowledge graph that serves as the
+structured backbone for Wikipedia, storing millions of entities as “nodes” and their relationships as “edges.”
+about grapefruit juice interactions, but not necessarily a single chunk covering
+both. In this scenario, your RAG system will only return an accurate answer if
+one of those returned chunks happens to discuss both.
+Chained or multi-hop reasoning
+Vector search handles topical similarity, but it does not follow a step-by-step
+chain of relationships.
+For the query “Who is the lead actor in the 2014 movie directed by the person
+who also directed Inception?”, a vector search might return chunks about Incep‐
+tion, which may include mentions of Christopher Nolan or his filmography, but
+the LLM may fail to reliably connect those dots into something like “Christopher
+Nolan → Interstellar → Matthew McConaughey.”
+It is worth noting that an AI agent may be capable of fully addressing these scenarios,
+as we discussed in Chapter 7, by carefully breaking down queries into subqueries and
+using tools iteratively. Nevertheless, in this chapter, we want to explore the following:
+is there a way to improve the accuracy of retrieval in RAG without relying on AI
+agents?
+It turns out that knowledge graphs (KGs) can be a valuable tool to handle these types
+of queries, and the production complexity of building and deploying KGs is justified
+when these types of complex queries are common and their failure to provide a
+high-quality response materially affects business outcomes.
+Let’s dive into knowledge graphs to understand what they are all about, and how to
+integrate them into your RAG workflow.
+Knowledge Graphs: An Overview
+A knowledge graph is a network of interconnected entities that encodes factual
+knowledge in a machine-readable form.2 To illustrate how KGs operate in practice,
+we will use the IMDb dataset, which provides structured data about movies, TV
+shows, video games, and the people involved in them, each identified by a unique
+IMDb ID.
+The core components of a KG are nodes and edges:
+Nodes (or entities)
+Nodes in a graph represent real-world entities like objects, people, places, or con‐
+cepts. In the case of IMDb, the nodes include Movie, Person, Genre, Character,
+280 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+and so on. Nodes often have properties that provide additional information about
+each node. For example, a Movie node can have properties like release year.
+Edges (or relationships)
+These are the connections between nodes, defining how they relate to one
+another. In the IMDb case, graph edges can be ACTED_IN, DIRECTED, HAS_GENRE,
+BELONGS_TO, APPEARS_IN, or MENTIONS.
+Let’s look at a simple example of a knowledge graph that describes nodes and rela‐
+tionships related to movies (Figure 9-1).
+Figure 9-1. Example of a knowledge graph for movies
+Here we have two types of nodes: Person (left-hand boxes) and Movie (right-hand
+boxes), and two types of edges: ACTED_IN and DIRECTED.
+Querying a KG is not about finding similarity, like in the case of vector search.
+Instead, it’s about traversing a path of known facts or entities. For example, to answer
+our multi-hop question (“Who is the lead actor in the 2014 movie directed by the
+person who also directed Inception?”), we might perform a structured query: find
+the node Inception; traverse the DIRECTED edge to find Christopher Nolan, then
+Knowledge Graphs: An Overview 
+| 
+281
+traverse all DIRECTED edges originating from him to find his other movies, and keep
+on those movies from 2014; then finally follow the ACTED_IN edge from each of those
+movie nodes to identify the lead actors.
+Learning from this simple example, it’s easy to understand why searching nodes can
+provide precise results and address questions that might be hard for semantic search
+to fulfill.
+How Do You Search a Knowledge Graph?
+A graph database is a specialized type of NoSQL database that stores data in a graph-
+like structure, emphasizing the relationships between data points. Unlike traditional
+relational databases that use tables with rows and columns, a graph database uses
+nodes and edges to represent graph data and is designed for efficient execution of
+graph queries.
+Some of the most prominent examples of graph databases include Neo4j, Amazon
+Neptune, Kuzu, and TigerGraph. To interact with and retrieve information from a
+graph database, you use a graph query language like Cypher or SPARQL. These
+specialized languages are designed to efficiently navigate the web of nodes and edges,
+allowing you to ask complex questions about the relationships within your data.
+Cypher
+Cypher, originally developed for the Neo4j database, is known for its intuitive and
+highly readable syntax that visually resembles the graph structure itself.
+In Cypher, nodes are represented by parentheses: (), and edges (relationships) are
+represented by square brackets: []. Let’s look at a simple pattern. To find a person who
+directed a movie, you can write
+(p:Person)-[:DIRECTED]->(m:Movie)
+Where
+• (p:Person) selects all nodes labeled Person. We’ve given it a variable name, p.
+•
+• (m:Movie) selects all nodes labeled “Movie”. We’ve given it a variable name, m.
+•
+• [:DIRECTED]describes the edge, specifying that the relationship type is
+•
+DIRECTED.
+• -> indicates the direction of the relationship—the person directed the movie.
+•
+To turn this into a full query that retrieves the names of people who directed the
+movie Oppenheimer, this becomes
+282 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+MATCH (p:Person)-[:DIRECTED]->(m:Movie)
+WHERE m.title = 'Oppenheimer'
+RETURN p.name
+This query tells the database to MATCH the specified pattern, filter it WHERE the movie’s
+title is Oppenheimer, and then RETURN the name property of the person node it found.
+In our simple graph example, this query returns “Christopher Nolan.”
+SPARQL
+SPARQL serves as the standardized query language for Resource Description Frame‐
+work (RDF) triple stores, a specialized type of knowledge graph. It uses a declarative
+pattern-matching syntax, to query triples, which are the three-part statements that
+comprise the graph:
+• The subject is the resource being described.
+•
+• The predicate is the property or relationship.
+•
+• The object is the value or related resource.
+•
+For example, the same query to find the director of Oppenheimer would look like this
+in SPARQL:
+SELECT ?personName
+WHERE {
+  ?movie :title "Oppenheimer" .
+  ?person :directed ?movie .
+  ?person :name ?personName .
+}
+Here, in our SPARQL query, ?person, ?movie, and ?personName are variables. Each
+line in the WHERE clause is a triple pattern that the database must match. For exam‐
+ple, ?movie :title "Oppenheimer" tells SPARQL that we want to match a triplet
+with any movie whose title is “Oppenheimer”.
+While less visually appealing than Cypher, SPARQL is a powerful World Wide Web
+Consortium (W3C) standard for querying linked data in a graph, designed to let you
+specify exactly what data you need. It’s about shaping and optimizing data delivery,
+and less about exploring graph theory.
+In practice, though, you can use both to achieve similar results—it really depends on
+what your graph database provides and what you are comfortable with. In the rest of
+this chapter, we provide examples in Cypher, although we could easily use SPARQL
+instead—this is not an indication of preference for one or the other. To learn more
+about graph databases and graph query languages, you can check other books that
+cover the topic in full detail, such as O’Reilly’s Building Knowledge Graphs.
+Knowledge Graphs: An Overview 
+| 
+283
+Ontologies Versus Schemas
+In the world of knowledge graphs, you will often hear the terms ontology and schema.
+While they are closely related, they serve different purposes in the design of your
+system.
+An ontology is the formal, abstract model of your domain that defines the “rules
+of reality” for your knowledge graph. It doesn’t care about specific data points (like
+Christopher Nolan); instead, it defines the categories and the logical constraints of
+how those categories interact. For example, in the movie domain, the ontology
+dictates that “A Person can DIRECT a Movie” but “A Movie cannot DIRECT a Person,” it
+defines that Movies must have a Release Year, and so on.
+A schema is the database-level implementation of that ontology. It is the specific set
+of labels, relationship types, and data constraints you apply to your graph database so
+that the system knows how to store and index the data. For example, if the ontology
+says movies have a release year, the schema defines that the Movie node in the DB will
+have a property called release_year, stored as an Integer.
+As we’ll see in the next section, when used with RAG, your ontology helps the LLM
+understand the logic of your data (e.g., “To find a director’s actors, I must traverse
+through the Movie nodes”), whereas the schema is what you provide to the LLM
+(often as a text description) so it can generate the correct Cypher or SPARQL code to
+fetch that data when issuing a graph database query.
+Now that we have a basic understanding of how a knowledge graph is stored in a
+graph database and how you can query a graph using a graph query language, let’s see
+how to integrate KGs into RAG.
+Using Knowledge Graphs in RAG
+To demonstrate how a KG can be used in RAG, we’ll expand on our example from the
+world of movies, and build a knowledge graph about movies using two complemen‐
+tary data sources:
+• IMDb (here we used the non-commercial IMDb datasets), which we mentioned
+•
+earlier, provides the base set of nodes and relationships: the verified “who, what,
+when” of cinema. We will create nodes like Movie, Person, Character, and Genre,
+with node properties like a movie’s release year, or a person’s role.
+• Movie scripts from the MovieSum dataset on Hugging Face include dialogue
+•
+and scene descriptions. We will split these movie scripts into text chunks and
+populate the Chunk nodes.
+284 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Let’s see how we build this specific knowledge graph from the IMDb and MovieSum
+datasets step by step. Later on in “Building Knowledge Graphs” on page 293, we will
+discuss the more general approach to building KGs.
+Building a Knowledge Graph for Movies
+To get started, we first need to install Neo4j and set up an account with a username
+and password (again, here, any type of graph database would be fine).
+The next step is processing the movie scripts themselves. For each script, we first
+clean up the text from XML tags and then use LangChain to break each script into
+chunks as follows:
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        length_function=len,
+        is_separator_regex=False,
+    )
+    cleaned_script = re.sub(r'<[^>]+>', ' ', script_content)
+    cleaned_script = re.sub(r'\s+', ' ', cleaned_script).strip()
+    chunks = text_splitter.split_text(cleaned_script)
+Before adding these chunks to the graph as Chunk nodes, we use a form of named-
+entity recognition (NER) to identify the Character entities in the script. Fortunately,
+movie scripts have a common structure, where the character’s name is in uppercase
+letters, which makes it relatively easy to identify them in the script, using regular
+expressions such as the following:
+# Pattern 1: Lines that start with character names (all caps, followed by colon 
+or newline)
+# Example: "JOHN:", "MARY\n"
+char_pattern1 = re.findall(
+r'^([A-Z][A-Z\s]{2,20}?)(?::|$)', script_text, re.MULTILINE
+)
+characters.update(
+[name.strip() for name in char_pattern1 if len(name.strip()) > 2]
+)
+    
+# Pattern 2: Character names in parentheses
+# Example: "(JOHN enters)", "(MARY speaking)"
+char_pattern2 = re.findall(
+r'\(([A-Z][A-Z\s]{2,15}?)(?:\s+[a-z]|\))', script_text
+)
+characters.update(
+[name.strip() for name in char_pattern2 if len(name.strip()) > 2]
+)
+Using Knowledge Graphs in RAG 
+| 
+285
+Using these regular expressions, some extracted character names are incorrect, so we
+add (see full Jupyter notebook) some more ad hoc parsing logic to make it more
+robust:
+1. Any valid character name needs to appear at least three times in the script
+1.
+2. Remove some common words that can be mistakenly identified as character
+2.
+names like THE, AND, WITH, HIM, and so on.
+This speaks to the fact that building (and maintaining) knowledge graphs is a difficult
+task that requires domain expertise. Unlike movie scripts, which offer predictable
+formatting and clear cues like all-caps character names, enterprise data—such as
+customer contracts, support tickets, and system logs—is often messy and contains
+inconsistent formatting. Bridging this gap between clean, structured examples and
+the ambiguity of real-world data is why KG construction remains a high-effort
+undertaking, a topic we will cover in more detail in “Building Knowledge Graphs” on
+page 293).
+Continuing with our example, the last step is to build the relationships in the graph.
+In this case, we will link Chunk nodes to Movie nodes and Character nodes.
+Here is an example chunk from the movie GoldenEye:
+a sidearm -- watches the needle flutter behind her. Kolkhaznha’s manner is friendly,
+avuncular, • and well-trained -- clearly designed to put Marina at ease • KOL‐
+KHAZHNA (switches to English) Do you speak English fluently? MARINA Yes KOL‐
+KHAZHNA Did you speak in English with the other prisoner while being transported
+here? MARINA Yes -- but -- KOLKHAZHNA (friendly) Just answer yes or no --
+this is only a preliminary debriefing. General Pushkin will arrive soon for more
+thorough questioning. (presses on) Do you have any prior relationship with the other
+prisoner? MARINA (decisively) ON THE NEEDLE it flutters widely across the scroll‐
+ing paper -- • KOLKHAZHNA looks intrigued as his assistant shakes EXT. WIDE ON
+URAL MOUNTAINS - A MILITARY ATTACK HELICOPTER his head. Meanwhile
+approaches quickly, flying high over the range -- as -- INSIDE THE GUEST ROOM-
+BOND has dragged the fireplace screen over and yanked a wire out to pick the lock of
+the handcuffs, but it’s a very awkward task -- INSIDE THE SALON- KOLKHAZHNA
+We can see there are a few characters mentioned here: KOLKHAZHNA, MARINA,
+and BOND. For each of the characters mentioned in this chunk, we can add the
+following relationships into the graph structure:
+(Chunk)-[:MENTIONS]->(Character)
+(Character)-[:APPEARS_IN]->(Movie)
+That’s it for the MovieSum dataset. We now turn to the IMDb dataset, which has
+additional useful information about movies, and populate additional nodes like Per
+son, Movie, Character, and Genre, and add relationships like the following:
+286 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+(Person)-[:DIRECTED]->(Movie)
+(Person)-[:ACTED_IN]->(Movie)
+(Movie)-[:HAS_GENRE]->(Genre)
+(Character)-[:PORTRAYED_BY]->(Person)
+Great, now we have what we need: a knowledge graph that integrates chunks and
+metadata from the movie scripts with additional information and relationships from
+IMDb. You can see the full code for building this KG in the “create-graph.ipynb”
+notebook.
+Now let’s see how we can use this graph in RAG.
+Using the Knowledge Graph at Query Time
+Once the KG is populated with nodes and relationships, we can integrate it into the
+RAG query flow using one of these common usage patterns: chunk enrichment or
+graph-hybrid retrieval.
+Chunk enrichment
+With this approach, the retrieval process begins with a standard vector search to find
+the chunks of text that are most semantically relevant to the user’s query. However,
+raw chunk text often contains “thin” references—misspelled names or pronouns like
+“he”—that lack the full context needed for an LLM to provide a factual answer.
+We use the KG to dynamically enrich these chunks, by performing a graph look-up on
+the entities found within the text. For example, consider the following query: “Which
+actor said, ‘They call it a Royale with Cheese,’ and what movie was this in?”
+First, we use standard vector search to find the chunk that contains the “Royale with
+Cheese” text. For example, it might retrieve the following chunk as the top match:
+for this to search you. Searching you is a right that the cops in Amsterdam do n’t have.
+JULES That did it, man - I’m f#%kin’ goin', that’s all there is to it. VINCENT You’ll
+dig it the most. But you know what the funniest thing about Europe is? JULES What?
+VINCENT It’s the little differences. A lotta the same shit we got here, they got there,
+but there they’re a little different. JULES Examples? VINCENT Well, in Amsterdam,
+you can buy beer in a movie theatre. And I do n’t mean in a paper cup either. They give
+you a glass of beer, like in a bar. In Paris, you can buy beer at MacDonald’s. Also, you
+know what they call a Quarter Pounder with Cheese in Paris? JULES They do n’t call
+it a Quarter Pounder with Cheese? VINCENT No, they got the metric system there,
+they would n’t know what the f#%k a Quarter Pounder is. JULES What’d they call it?
+VINCENT Royale with Cheese. JULES ( repeating . ) Royale with Cheese. What’d they
+call a Big Mac? VINCENT Big Mac’s a Big Mac, but they call it Le Big Mac. JULES
+What do
+Using Knowledge Graphs in RAG 
+| 
+287
+The vector search was successful—it found the exact line of dialogue. However,
+looking at the raw text, this is not enough to answer the user’s question—it doesn’t
+include the movie name, and it doesn’t name the actor, just the character (Vincent).
+The retrieved chunk above looks messy, combining character
+names with text, having some typos like “do n’t” (extra space), but
+note that it is the exact chunk as extracted using the code in the
+example notebook from the MovieSum and IMDb datasets.
+An LLM receiving only this text will have a hard time answering this question, due to
+the missing information (movie name and actor name).
+The graph enrichment step can identify the entity Character: Vincent in the chunk
+text and use the KG to obtain additional context that is not in the text:
+1. Character: Vincent -> IS_REAL_NAME: Vincent Vega
+1.
+2. Character: Vincent -> PLAYED_BY Actor: John Travolta
+2.
+3. Character: Vincent -> APPEARS_IN Movie: Pulp Fiction
+3.
+Instead of just sending the raw chunk text to the LLM, we send the chunk plus a
+knowledge context packet that includes this additional information, allowing the LLM
+to answer with 100% certainty, transforming a vague snippet into a data-rich fact.
+This flow is illustrated in Figure 9-2.
+Figure 9-2. Chunk enrichment workflow: the initial chunks that are retrieved from the
+vector DB are then enriched using the Graph DB, before being sent over to the generative
+LLM step
+288 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Chunk enrichment highlights the strength of the KG as a high-fidelity “context
+provider” that annotates and adds structure or metadata to the results of your vector-
+based RAG retrieval system.
+Hybrid-graph retrieval
+In this approach, we first ask an LLM to convert a user’s natural language question
+directly into a formal graph query language, like Cypher or SPARQL, that the graph
+database can execute, with the intent of extracting relevant chunks from the graph
+and combining them with the chunks retrieved from vector-based retrieval.
+For this to succeed, the LLM must first be given the graph’s schema, a blue‐
+print of the available node labels (e.g., Person, Movie, Chunk), relationship types
+(e.g., :DIRECTED, :ACTED_IN), and properties. This schema provides the LLM with
+the “vocabulary” and “grammar” it needs to write a valid graph query.
+As an example, consider this question: “What are all the characters in GoldenEye?
+Which of them interacted with Bond?”
+Armed with the schema, the LLM can translate this into a Cypher query:
+// Step 1: Find all characters in GoldenEye
+MATCH (m:Movie)
+WHERE toLower(m.title) CONTAINS 'goldeneye'
+WITH m
+MATCH (c:Character)-[:APPEARS_IN]->(m)
+WITH m, collect(DISTINCT c.name) AS all_characters, m.title AS movie_title
+// Step 2: Find characters that interacted with Bond (i.e., co-mentioned in a 
+chunk)
+MATCH (m2:Movie)
+WHERE toLower(m2.title) CONTAINS 'goldeneye'
+MATCH (ch:Chunk)-[:BELONGS_TO]->(m2)
+// Find chunks mentioning Bond (fuzzy match: 'bond')
+MATCH (ch)-[:MENTIONS]->(bond_char:Character)
+WHERE toLower(bond_char.name) CONTAINS 'bond'
+// Find other characters mentioned in the same chunk
+MATCH (ch)-[:MENTIONS]->(other_char:Character)
+WHERE other_char <> bond_char
+WITH movie_title, all_characters, collect(DISTINCT other_char.name) AS 
+interacted_with_bond, collect(DISTINCT ch.text)[0..10] AS chunks
+RETURN movie_title, all_characters, interacted_with_bond, chunks
+Executing this Cypher query against the graph database, we retrieve relevant chunks
+and can send them directly to the generative LLM in your RAG pipeline.
+If we simply use the chunks from the vector search, we don’t have enough informa‐
+tion, and the RAG responds with “I cannot answer this question.” However, by
+combining the chunks from the vector search with those from the graph DB and
+sending both to the generative LLM in your RAG pipeline, as shown in Figure 9-3, we
+get a better response:
+Using Knowledge Graphs in RAG 
+| 
+289
+Based on the provided context, the following characters appear in GoldenEye:
+**Characters in GoldenEye:**
+- James Bond
+- Marina
+- Trevelyan
+- Savatier
+- Morley
+- Kolkhazna (Kolkhazna's dead assistant is mentioned)
+- Romaly
+- Valentin
+- Elliot Harmsway
+- Technicians (in the control center)
+- Guards
+- Militiamen
+- Bartender
+- Gunner (on the helicopter)
+- Jordan (killed by Xenia)
+- Xenia
+**Characters who interacted with Bond:**
+- Marina (multiple scenes, including romantic and action sequences)
+- Trevelyan (direct confrontation and dialogue)
+- Savatier (physical fight with Bond)
+- Morley (present in action scenes with Bond)
+- Romaly (Bond gives instructions to Romaly)
+- Valentin (dialogue at the bar)
+- Elliot Harmsway (introduction and dialogue)
+- Bartender (serves Bond a drink)
+- Militiamen (chase Bond)
+- Guards (involved in action sequences with Bond)
+- Gunner (shoots at Bond and Marina)
+- Xenia (antagonist, interacts through conflict)
+- Technicians (indirectly, as Bond's actions affect them)
+**Characters mentioned but with unclear or no direct interaction with Bond:**
+- Kolkhazna's dead assistant
+- Jordan (killed by Xenia, no direct interaction with Bond in the provided 
+  context)
+**Summary:**  
+The main characters who interacted with Bond in GoldenEye, according to the 
+context, are: Marina, Trevelyan, Savatier, Morley, Romaly, Valentin, Elliot 
+Harmsway, Bartender, Militiamen, Guards, Gunner, and Xenia.
+290 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Figure 9-3. Graph query generation in a RAG pipeline
+By combining the conceptual understanding of semantic (vector) search with the
+factual precision of KGs, you enable your RAG application to answer a much broader
+range of questions with higher accuracy than either approach could achieve alone.
+For example, HippoRAG, a graph-augmented RAG framework that combines LLMs
+with a KG, yields up to ~20% higher accuracy on multi-hop question-answering
+benchmarks compared to standard RAG baselines.
+You can see the full code for this combined approach in the GitHub repo, where we
+use LangChain to build a local RAG system (with Chroma as the vector database),
+which combines chunks from vector search with those identified by the graph query
+(after automated translation to Cypher).
+Choosing Between Enrichment and Hybrid Retrieval
+While both chunk enrichment and hybrid graph retrieval leverage the power of a
+knowledge graph for RAG, they solve different problems and carry distinct opera‐
+tional costs.
+Chunk enrichment is a “metadata-first” strategy. It assumes your vector search is
+already effective at finding relevant text, but that the text itself is missing broader
+context. This is the ideal choice when queries are semantic (like asking about a spe‐
+cific line from a movie), but the answer requires external facts (like an actor’s name)
+not present in the snippet. Because this involves a simple indexed lookup of the
+retrieved chunk’s ID, it adds negligible latency and is highly reliable in production.
+Hybrid-graph retrieval, by contrast, is a “discovery-first” strategy. It excels when the
+user’s query is structural or relational, requiring the system to traverse connections
+Using Knowledge Graphs in RAG 
+| 
+291
+that a vector search would miss (e.g., “Find all characters who interacted with Bond
+in more than three scenes”). However, this power comes with nontrivial production
+complexity. You must manage a “text-to-Cypher” pipeline where an LLM translates
+natural language into a database query. This also introduces additional risks, such as
+when the LLM hallucinates invalid syntax, and to run this safely, you need to consider
+query timeouts and implement retry strategies to handle failures.
+The main differences are listed in Table 9-1.
+Table 9-1. Comparing chunk enrichment to hybrid-graph retrieval for RAG in production
+Feature
+Chunk enrichment
+Hybrid-graph retrieval
+Primary goal
+Contextualizing a specific text snippet
+Finding relationships/aggregations
+Ideal for
+Factual grounding (dates, names, IDs)
+Multi-hop reasoning (who met whom?)
+Runtime risk
+Low: simple indexed lookup
+Higher: query hallucinations or slow joins
+Latency
+Minimal (submillisecond lookup)
+Variable (depends on LLM and query complexity)
+Implementation Straightforward; great for minimal viable
+product
+Complex; requires “text-to-Cypher” or “text-to-
+SPARQL” tuning
+Regardless of the pattern you use for integrating KGs with RAG, the success of a
+KG depends on your data engineering maturity. In production, you will face entity
+explosion, when a single entity may be mapped into multiple nodes. For example,
+your extraction pipeline might create three different nodes for “007,” “James Bond,”
+and “Bond,” instead of merging those into a single node.
+As we discuss later in “Building Knowledge Graphs” on page 293, building and
+maintaining a high-fidelity KG is a significant “offline” engineering effort that must
+be weighed against the benefits of using a KG to enhance query accuracy. Most com‐
+monly, your evals (see Chapter 6) can provide great input for making this decision: by
+analyzing the quality of your query responses, you can see which kinds of queries fail
+and whether a KG can help make them succeed.
+If you are just starting, chunk enrichment often offers the “best bang for your buck,”
+providing immediate factual grounding with low risk. As your use cases evolve
+toward complex reasoning and cross-document aggregations, the investment in a
+hybrid-graph pipeline might become necessary to break through the limitations of
+similarity-based retrieval.
+Another important decision when implementing the patterns above in production
+is where your vector embeddings will reside, a choice that impacts your system’s con‐
+sistency, latency, and operational overhead. Since modern graph databases support
+native vector indexes, you can just store the vector embedding directly in each chunk
+node with the property chunk.embedding. With this approach, your retrieval flow
+can perform a semantic search and a graph traversal in a single database transaction.
+This provides atomic consistency, and provides a single source of truth for the
+292 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+embeddings. However, you now depend on the vector DB processing of embedding,
+which may compete with complex graph traversals for RAM, potentially leading to
+performance bottlenecks in very large datasets.
+The other option is to maintain the standard RAG retrieval flow, and store the
+embeddings in the vector DB. Once a chunk is retrieved, the system uses its chunk_id
+to perform a lookup in the graph DB for enrichment or further traversal. This
+approach allows you to maintain your high-performance retrieval pipeline (which
+includes vector search, but might also incorporate hybrid search and/or reranking)
+independently of your graph traversals (to support high-depth logic). However, you
+are now responsible for ensuring the vector DB and graph DB are fully synchronized,
+avoiding a situation where your RAG flow retrieves a chunk from the vector store
+that no longer exists in the graph, causing an application error.
+We’ve seen why KGs are helpful for some complex queries and two common patterns
+of integrating them into RAG. It turns out, however, that one of the main challenges
+in using KGs with RAG is the task of building and maintaining these knowledge
+graphs, which we cover next.
+Building Knowledge Graphs
+We’ve seen how to build a knowledge graph from IMDb and the MovieSum datasets
+in “Building a Knowledge Graph for Movies” on page 285. As a reminder, the general
+approach is as follows:
+1. Design the graph schema: we decided to include nodes for Person, Movie, Charac
+1.
+ter, Genre, and Chunk, and relationships such as ACTED_IN, PORTRAYED_BY, and
+DIRECTED.
+2. We then used some custom pre-processing of both the IMDb and MovieSum
+2.
+datasets to populate the graph itself.
+For the movie scripts, we were able to automate part of this process, by identifying
+character names in the script, because character names in movie scripts are relatively
+easy to identify. But even with this simplification, we had to do some manual process‐
+ing to remove words that were misidentified as character names (like “her” or “his”).
+The IMDb dataset was created and sanitized for us already, so creating a graph from
+that dataset was relatively easy—the creators of that dataset did all the hard work for us.
+While our experience with movie scripts required manual intervention, it still rep‐
+resents the best-case scenario for data extraction. Building a KG from internal cor‐
+porate data means navigating a labyrinth of unstructured “dark data,” inconsistent
+schemas, and siloed legacy systems. If cleaning a few movie scripts felt tedious, imag‐
+ine performing that same process across millions of fragmented PDF files, spread‐
+sheets, emails, and private data, where domain expertise is absolutely necessary.
+Building Knowledge Graphs 
+| 
+293
+Automating Knowledge Graph Construction
+While manually curating a knowledge graph can produce clean, accurate results,
+this expert-driven approach is labor-intensive and can quickly become a significant
+bottleneck. In fact, constructing KGs rarely scales to meet the demands of modern
+enterprise applications, especially for dynamic RAG and agentic systems that must
+process a constant velocity of new, unstructured information.
+Instead, it is becoming more common to use an automated approach to build the
+graph from text, by following these three steps:
+1. Find the key “things” (entity identification): scan the text to find and categorize
+1.
+important nouns. For example, identify “Apple” as an “organization” and “Steve
+Jobs” as a “person.” These things become the nodes in our graph.
+2. Find the connections (relation extraction): analyze the sentences to figure out
+2.
+how these things are related. The processing might see the sentence “Apple was
+founded by Steve Jobs” and create a connection, or link, represented as (Apple,
+FOUNDED_BY, Steve Jobs).
+3. Clean up duplicates (entity linking): finally, the system cleans up the data by
+3.
+making sure different names for the same thing all point to one single entry or
+node. For instance, it learns that “Apple,” “Apple Inc.,” and “the company that
+makes iPhones” are all the same entity. This ensures the graph is accurate and not
+full of duplicates.
+This whole process effectively turns a messy sea of text into a clean, organized
+network of interconnected facts.
+Using LLMs, these steps can be dramatically streamlined. Instead of using separate,
+specialized, old-school NLP models for each task, a single, powerful LLM can
+be prompted to read a document and directly output a set of structured entity–
+relationship triples. This approach simplifies the engineering complexity and often
+improves results due to the LLM’s vast world knowledge and nuanced understanding
+of context.
+But while LLMs can dramatically streamline this step, it is important to tem‐
+per expectations: purely LLM-driven triple extraction is still noisy and domain-
+dependent. In a production environment, an LLM-only pipeline is often just the
+starting point for bootstrapping a graph, and to achieve the high fidelity required for
+business outcomes, most teams implement a hybrid extraction strategy. This involves
+using the LLM to propose entities and relations, which are then passed through a
+layer of deterministic heuristics (e.g., regular expressions for IDs or dates), classical
+NLP models for validation, and a human-in-the-loop interface for expert quality
+assurance on critical entities.
+294 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Furthermore, when we use an LLM, a key challenge remains: entity linking.
+Real-world enterprise data is messy and inconsistent, and a single real-world “thing”
+can be referenced by many different names or identifiers. The same “one-thing-
+many-names” problem occurs with almost any entity in an enterprise knowledge
+graph. Here are some more examples:
+Company entities in financial services
+A single corporate entity might appear in news articles, regulatory filings, and
+internal reports as “IBM Inc.,” “International Business Machines Corp.,” “I.B.M.,”
+or even just “IBM.”
+Drug components in pharmaceuticals
+A single drug is frequently referred to by its brand name (e.g., “Tylenol”), its
+generic/active ingredient name (e.g., “acetaminophen”), and its formal chemical
+name (e.g., “N-acetyl-para-aminophenol”).
+Products in supply chains and ecommerce
+A single product, like an “iPhone 15 Pro 256GB,” may be listed by different ven‐
+dors or in different systems as “Apple iPhone 15 Pro (256)” or “IP15PRO-256-
+BLK.”
+To effectively tackle entity linking, we need to start by defining a clear ontology, which
+defines the “things” that exist in your domain (the classes or types of entities, like
+“person,” “company,” or “drug”), as well as the properties and relationships they can
+have.
+In the context of entity linking, the ontology provides the basic structure needed to
+solve the “one-thing-many-names” problem. For instance, it might define a company
+entity as having one canonical name (e.g., “International Business Machines Corp.”)
+but also a list of aliases (e.g., “IBM,” “I.B.M.”). When the system later encounters
+“IBM Inc.,” it knows its task is not to create a new node, but to recognize it as an alias
+and link it to the existing canonical company node, filling in the appropriate property
+as defined by the schema.
+With the ontology as the target structure in hand, the entity-linking process requires
+actively matching, linking, and merging entities. This is rarely a single algorithm or
+approach, but rather a multi-stage pipeline that typically includes the following two
+steps:
+1. Normalization: raw text is cleaned and standardized (e.g., “Corp.” and “Corpora‐
+1.
+tion” both become “corp”; all text is lowercased).
+2. Candidate generation: looking for entities that represent the same “thing,” you
+2.
+typically narrow down the search space in some way, so you’re not comparing
+every entity to every other entity. For example, it might only compare person
+entities that are similar in some manner, using techniques from simple string
+Building Knowledge Graphs 
+| 
+295
+3 This data point was given in conversation with an expert in building knowledge graphs with deep experience
+in the field over the last few decades.
+comparison (for example, Jaro–Winkler distance for “Chris” versus “Christo‐
+pher”) to complex contextual and domain-specific similarity metrics.
+The full entity-linking process involves an initial bootstrapping phase, where the
+system runs a large-scale job over the existing data to create the initial set of canon‐
+ical entities. After that, it’s common to use an incremental mode, whereby as new
+unstructured data arrives, an entity-linking model’s job is to match the new surface
+forms (like “Tylenol”) against the existing canonical entities in the graph (the Drug
+node for “acetaminophen”).
+You can also augment this process with human-in-the-loop: when the system’s con‐
+fidence in a match is low (e.g., it’s 50/50 on whether “Christian” is the same as
+“Christopher”), it flags the ambiguity for expert review. This focuses scarce human
+effort only on the most difficult cases, allowing the system to scale while continuously
+learning and improving its accuracy from the expert feedback.
+Entity linking (also known in the computer science literature as record linkage) is
+especially challenging at large scale and with messy data, highlighting the difficulty
+inherent in automating the generation of KGs from text, even if we utilize the
+immense power of LLMs.
+Leveraging Standard Ontologies and Knowledge Graphs
+We’ve seen that building a knowledge graph from the ground up can be a high-risk
+endeavor. In fact, according to one estimate,3 over 50% of such projects fail. The
+technical reason is often underestimating the complexity involved, especially around
+entity linking, but another common reason is an attempt to model “everything” in the
+domain rather than adopting a focused, use case-driven approach.
+Standard ontologies offer a head start that can help you avoid this unnecessary pitfall.
+They provide a formal, standardized structure that defines the key concepts and
+relationships for a specific domain like finance or healthcare. By thinking through
+your ontology, you not only save development time but also ensure your data model
+is correct, consistent, and interoperable, preventing the common pitfall of building an
+overly broad and unusable graph.
+Several powerful, open source ontologies are publicly available. For example, in the
+finance domain, we have Financial Industry Business Ontology (FIBO), developed by
+the Enterprise Data Management (EDM) Council, which provides a precise vocabu‐
+lary for financial concepts like Corporation, Security, and Loan. Its value lies in its
+detailed, standardized properties, which are essential for accurate entity resolution.
+296 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Using an ontology is helpful, as it provides you with the blueprint of the knowledge
+graph, but you still have to populate it with data. Companies like Dun & Bradstreet,
+Refinitiv (now LSEG), and S&P Global have invested millions of hours in the difficult
+work of entity linking, and recently they have been working toward licensing this
+kind of data via curated data feeds that assign canonical identifiers, like a Data Uni‐
+versal Numbering System (D-U-N-S) number or a Permanent Identifier (PermID), to
+uniquely identify entities and map their complex corporate hierarchies.
+Similarly, in healthcare, datasets like DrugBank function as a comprehensive knowl‐
+edge graph mapping the relationships among drugs as well as chemical components.
+For instance, a single drug entity like atorvastatin is connected via specific relation‐
+ships to its known protein targets (e.g., HMG-CoA reductase), the enzymes that
+metabolize it (e.g., CYP3A4), and other drugs it interacts with.
+The primary value of licensing this type of data is that it provides a high-quality,
+pre-resolved core knowledge graph, saving you from the enormous effort of resolving
+everything yourself. Your task is reduced to a much smaller, more manageable prob‐
+lem: linking your new, messy internal data to the provider’s established, canonical
+entities. This allows you to connect “IBM” or “I.B.M.” in your systems to the single
+golden record for “International Business Machines Corp.”
+While valuable, such licensable KGs do have their downsides: in addition to licensing
+fees, you need to consider the commitment you make to using this specific form of
+KG, and that all other data systems will have to conform to it.
+Given the enormous complexity of building and maintaining KGs, researchers have
+been looking for other ways to integrate KGs into RAG. One such approach is
+Microsoft’s GraphRAG, an innovative approach of using an LLM not just to extract
+atomic facts but to generate a hierarchical graph that captures information at multiple
+levels of abstraction.
+GraphRAG
+Before diving into GraphRAG, it’s important to clarify that some AI engineers use
+the term “GraphRAG” to describe any form of graph-aided RAG, like, for example,
+the techniques in “Using Knowledge Graphs in RAG” on page 284. In this chapter,
+however, we will use the term GraphRAG when referring to the specific approach for
+using knowledge graphs for RAG introduced by Microsoft Research, and designed
+to support answering sensemaking queries—broad, exploratory queries that require
+synthesizing information from an entire dataset, like “What are the main themes in
+all James Bond movies?”
+In technical terms, this process is known as query-focused summarization (QFS),
+where the goal is to generate a comprehensive answer based on a global view of the
+Building Knowledge Graphs 
+| 
+297
+data rather than retrieving a few specific snippets or chunks (which may or may not
+capture that global view).
+GraphRAG uses an LLM to build a graph automatically from the source documents.
+With this graph, it then identifies clusters (communities), which are summarized, and
+this process is repeated up to the top level of the graph to enable understanding of
+global contexts. It works as follows:
+Building a knowledge graph
+Use an LLM to automatically extract key entities (like people, places, and con‐
+cepts) and the relationships between them, from the unstructured text corpus,
+and dynamically construct a knowledge graph. This graph isn’t based on a prede‐
+fined schema but is instead a direct structural representation of the knowledge
+contained within the source documents themselves, capturing how different
+ideas and entities are interconnected throughout the text.
+Community detection
+The primary innovation of GraphRAG lies in how it utilizes this newly created
+graph. Instead of just treating it as a normal knowledge graph, with GraphRAG,
+you apply community detection algorithms to identify clusters of densely con‐
+nected entities. These “communities” represent the core themes and semantic
+topics that are in your data, and GraphRAG then leverages an LLM to generate
+summaries for each of these communities at multiple hierarchical levels, from
+very specific subtopics to broad, overarching themes.
+Querying
+When responding to a user query (the sensemaking query), the GraphRAG
+query engine doesn’t search the raw text and summarize it with an LLM like in a
+normal RAG pipeline. Instead, it finds the most relevant community summaries
+that answer your query, and uses an LLM to generate a partial answer based on
+each relevant community summary. Then, another LLM call uses all these partial
+answers to formulate a final comprehensive response to the query.
+Microsoft’s graphrag package is open source, so let’s see how we can use it. Applied to
+the MovieSum dataset, we start by loading the data:
+import pandas as pd
+import numpy as np
+from datasets import load_dataset
+moviesum_dataset = load_dataset("rohitsaxena/MovieSum")
+moviesum_df = pd.DataFrame(moviesum_dataset['train'])
+Since GraphRAG is quite expensive and time-consuming (GraphRAG makes a large
+number of LLM calls at indexing time to process all the documents), we pick a
+random set of 20 movies, so that our cost for this example is reasonable:
+298 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+np.random.seed(42)
+SAMPLE_SIZE = 20
+indices = np.linspace(0, len(moviesum_df) - 1, SAMPLE_SIZE, dtype=int)
+filtered_df = moviesum_df.iloc[indices].copy()
+In the full notebook, you can find a function that estimates the cost of running
+GraphRAG on these 20 movies, which comes to $6.32. For the full MovieSum dataset
+of 1800 movies, the cost would be over $560. And that’s only for 1800 movies;
+imagine how much the cost might be for your whole Google Drive or Microsoft
+SharePoint account? We will discuss this cost aspect a bit later in this chapter.
+The next step is to define a settings.yaml file that defines how GraphRAG is going to
+work, including the LLM to use, chunk size, graph entities, and additional configura‐
+tion parameters.
+Once the settings are defined, running GraphRAG boils down to a simple call to
+functions in the GraphRAG library. First we prepare the documents in the format
+GraphRAG expects them:
+from datetime import datetime
+input_docs = []
+current_date = datetime.now()
+for idx, row in filtered_df.iterrows():
+    input_docs.append({
+        'id': row['imdb_id'],
+        'title': row['movie_name'],
+        'text': row['script'],
+        'creation_date': current_date
+    })
+input_df = pd.DataFrame(input_docs)
+And then, we run the build_index process:
+from graphrag.api import build_index
+from graphrag.config.load_config import load_config
+GRAPHRAG_DIR = Path("./graphrag_workspace")
+config = load_config(root_dir=GRAPHRAG_DIR)
+results = await build_index(
+    config=config,
+    input_documents=input_df,
+    verbose=True
+)
+This might take a while. And we mean a while—on a decent M4 Mac laptop, for only
+20 movies, it took about 45 minutes. This is because GraphRAG indexing is not a
+simple one-pass process. The system must make dozens of sequential LLM calls for
+every single text chunk: first to extract entities and claims, then to resolve and merge
+those entities, and finally to generate multiple layers of hierarchical community
+Building Knowledge Graphs 
+| 
+299
+summaries. Each of these steps is computationally expensive and relies on the LLM’s
+reasoning speed, creating a large cumulative latency even for modest datasets (20
+movies in our case).
+GraphRAG generates an output folder, where various Parquet files are generated with
+the outputs of the build_index process.
+To run a query in GraphRAG, we first load these datasets into pandas DataFrames:
+from graphrag.config.load_config import load_config
+config = load_config(root_dir=GRAPHRAG_DIR)
+entities_df = pd.read_parquet(OUTPUT_DIR / "entities.parquet")
+relationships_df = pd.read_parquet(OUTPUT_DIR / "relationships.parquet")
+communities_df = pd.read_parquet(OUTPUT_DIR / "communities.parquet")
+reports_df = pd.read_parquet(OUTPUT_DIR / "community_reports.parquet")
+text_units_df = pd.read_parquet(OUTPUT_DIR / "text_units.parquet")
+GraphRAG defines two types of query functions:
+local_search
+This can be used as an exploratory, “bottom-up” method: it first identifies a
+few seed nodes in the graph that closely match the query, and then “walks”
+outward along their edges to discover nearby, contextually related nodes and
+relationships (e.g., 1-hop or 2-hop neighbors). This approach is ideal for using
+GraphRAG to answer specific, detailed questions where the necessary context is
+likely contained within a localized “neighborhood” of the graph.
+global_search
+This employs a comprehensive, “top-down” strategy. Instead of just expanding
+from seed nodes, it searches across the entire graph to identify all nodes, relation‐
+ships, or even entire subcommunities that are semantically relevant to the query
+concept, even if they aren’t directly connected. This method is better suited for
+broad, high-level queries that require synthesizing information from multiple,
+potentially disconnected parts of the graph.
+As an example, if we run a global search for the query “What are the main themes
+and narrative patterns across all the movie scripts?”, we get the following:
+The movie scripts analyzed reveal a rich tapestry of recurring themes and 
+narrative patterns that span a wide range of genres, character types, and 
+settings. These themes often intertwine, creating complex stories that explore 
+human emotions, supernatural elements, social dynamics, and conflict. Below is a 
+comprehensive synthesis of the main themes and narrative patterns identified 
+across the dataset.
+---
+## 1. **Conflict and Struggle**
+Conflict is a pervasive and driving force in many narratives, manifesting in 
+300 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+various forms:
+- **Physical and Military Conflict:** Stories often depict intense battles and 
+warfare, such as Conan’s confrontations with hostile tribes and empires, Vlad’s 
+defense against Mehmed’s army, and the violent raids by the Turanian Horsemen. 
+These conflicts emphasize themes of survival, leadership, rebellion, and the 
+cost of violence [Data: Reports (177, 665, 684, 659, 554, 547, 6, 668, 699, 
++more)].
+- **Personal and Social Confrontations:** Beyond warfare, narratives explore 
+interpersonal conflicts including domestic violence, legal disputes, and social 
+tensions. For example, the tragic relationship between Denise and Tommy 
+escalates from care to violence, while Barbara and Jonathan’s turbulent marriage 
+involves emotional and legal struggles [Data: Reports (239, 442, 118, 379, 943, 
+980)].
+- **Supernatural Battles:** Many scripts incorporate supernatural conflict, such 
+as possession, hauntings, and battles with demons or fiends. The Lambert and 
+Renai families face malevolent entities, blending everyday family life with 
+extraordinary threats, highlighting emotional resilience amid trauma [Data: 
+Reports (878, 856, 237, 235, 13, 79, 242, 881, +more)].
+---
+## 2. **Family and Interpersonal Relationships**
+Family dynamics and close personal relationships are central to many narratives, 
+often serving as emotional cores:
+- **Parent-Child Bonds:** The father-son relationship between Sam and Jonah 
+Baldwin exemplifies themes of grief, support, and complex family dynamics. 
+Similarly, Eve’s growth within her family and community highlights nurturing and 
+social bonding [Data: Reports (1, 44, 468, 374, 136)].
+- **Complex Family Struggles:** Several stories explore emotional tension, love, 
+conflict, and vulnerability within families, such as Jonathan Rose’s 
+multifaceted household challenges and the Transylvanian family’s struggles amid 
+supernatural and political threats [Data: Reports (532, 5, 566, 234, 546)].
+- **Interpersonal Networks:** Friendships, mentorships, and romantic 
+relationships also play significant roles, shaping character development and 
+social cohesion. Examples include the artistic collaboration of Bob Wallace and 
+Phil Davis, the mentorship between Rocky Balboa and Apollo Creed, and the social 
+tensions in adolescent networks [Data: Reports (224, 460, 469, 934, 740, 16)].
+---
+## 3. **Supernatural and Paranormal Elements**
+A strong narrative pattern involves supernatural phenomena, often intertwined 
+with family and psychological themes:
+- **Possession and Hauntings:** Families like the Lamberts and Renais confront 
+possession and hauntings, with narratives exploring the psychological toll and 
+Building Knowledge Graphs 
+| 
+301
+protective instincts within these crises. The use of alternate realms such as 
+The Further and the Black Void adds metaphysical depth [Data: Reports (878, 856, 
+237, 235, 79, 242, 881, 879, 159, +more)].
+- **Psychological Horror and Trauma:** Characters such as Billy embody trauma 
+and psychological distress, with symbolic motifs like the dark Santa Claus 
+figure representing the blurring of innocence and menace. These stories delve 
+into internal conflict and emotional turmoil [Data: Reports (17, 268, 950, 
+270)].
+- **Mystical and Magical Conflicts:** Some narratives incorporate dark magic, 
+blood rituals, and supernatural warfare, as seen in the Acheron Empire and 
+Vlad’s transformation, blending fantasy with horror [Data: Reports (665, 614, 
+575)].
+…
+[truncated]
+The full response is quite large, and so we truncated here. Please see the full response
+in the notebook, as well as some other examples.
+In spite of the advantages of GraphRAG and its power in answering difficult sense‐
+making questions (using QFS), the primary drawback of GraphRAG (as we’ve seen
+above) is its substantial cost (and time) of upfront pre-processing.
+While a standard RAG system simply needs to chunk text and generate vector
+embeddings, a relatively fast and inexpensive process (although this becomes some‐
+what more expensive with modern embedding models, which may have dimensions
+as high as 4K), GraphRAG engages in a multistage, computationally intensive pre-
+processing pipeline. It requires a powerful LLM to first read the entire corpus to
+extract entities and relationships, then build a massive knowledge graph, run complex
+community detection algorithms across that graph, and finally, it uses the LLM again
+to generate hierarchical summaries for every identified theme.
+Because of this overhead, GraphRAG is often the wrong tool for several common
+production scenarios:
+Rapidly changing corpora
+For data that updates frequently, such as news feeds, support tickets, or active
+code repositories, the constant need to recompute community summaries is
+often financially and operationally impractical.
+Latency-sensitive or personalized queries
+The process of synthesizing multiple community summaries is inherently slower
+than a standard vector lookup. It is not suitable for applications requiring subsec‐
+ond responses or queries tailored to a specific user’s private data.
+302 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Requirement for verbatim citations
+GraphRAG excels at high-level abstraction. If your use case requires the LLM to
+provide the exact (raw) sentence from a document for auditing or legal compli‐
+ance, the summarized nature of the community reports may be too “lossy.”
+Ultimately, if your queries are mostly simple fact retrieval (e.g., “What is the price of
+X?”), the significant investment GraphRAG offers little ROI over a standard semantic
+search.
+The Graph Database Infrastructure
+Integrating a knowledge graph into your RAG application is not just an architectural
+decision; it’s a long-term operational and systems-level commitment. While the
+potential for high-precision, explainable answers is high, so is the complexity of
+building, scaling, and, most importantly, maintaining the graph database.
+First, let’s look at how to pick a graph database, as this choice will dictate your entire
+operational playbook. There are a few types of graph database systems:
+Traditional server/cluster (e.g., Neo4j, TigerGraph)
+You can run systems like Neo4J or TigerGraph as stateful, standalone services
+on dedicated virtual machines (VMs) or in a Kubernetes cluster, and in many
+ways, they act like traditional SQL databases. Here, your DevOps team is respon‐
+sible for everything: installation, configuration, clustering, sharding, resource
+management, and network security. Sizing is critical, as property graphs are often
+memory-bound, and performance hinges on fitting the “hot” graph into RAM.
+This is a good choice if you have strict on-premises/regulatory constraints or
+require deep, low-level customization of the database engine that managed serv‐
+ices don’t allow.
+Managed cloud service (e.g., Neo4j Aura, Amazon Neptune)
+Using the platform-as-a-service (Neo4j AuraDB, Amazon Neptune) approach,
+you trade fine-grained control for operational simplicity. The cloud provider
+handles patching, backups, and high availability, and the burden shifts from
+server management to cost management and identity and access management
+(IAM) integration.
+Choose this if you need multitenant access, high availability, and automated
+backups, but lack in-house graph database expertise or dedicated DevOps
+resources to manage a cluster.
+Embedded library (e.g., Kuzu, DuckDB)
+In the more recent “serverless” model, like what is provided by Kuzu or DuckDB,
+the database is a library that runs inside your application process. The “database”
+is just a file on disk. Here, the traditional server-admin role vanishes, and the
+Building Knowledge Graphs 
+| 
+303
+challenge becomes data lifecycle and build management. How do you update the
+static graph file in your running application containers? This requires a robust
+CI/CD pipeline that can build a new data file, package it into a new container
+image, and roll out the deployment.
+This is a great choice if your KG is relatively small (under 10–20 GB), mostly
+read-only, and can be refreshed via a CI/CD pipeline. The challenge here is
+the data lifecycle—packaging new graph files into your container images for
+deployment.
+Once you’ve chosen a stack, the day-to-day operational work begins, and there are
+several main challenges to consider:
+ETL
+This is, by far, the most underestimated cost. A stale graph is a useless graph.
+Your source data may be constantly changing, and you need to build a reliable
+ETL pipeline to ensure your KG is up-to-date. Crucially, in production, this
+pipeline must solve for data integrity, and since building a graph from multiple
+sources involves a sequence of operations, you risk ending up with a “broken”
+graph if an import fails midway (e.g., your movie script chunks are imported, but
+the IMDb metadata sync crashes).
+While traditional SQL databases rely on transactions to ensure atomicity (an
+“all-or-nothing” approach), wrapping a large graph “build” in a single transaction
+is often infeasible; it can lock the database for hours and exhaust memory.
+Instead, production RAG systems that use KGs can be designed for idempotency,
+so that if your ingest code fails and you restart it, the result is the same as if it
+had succeeded the first time. In Cypher, for example, this is achieved using MERGE
+instead of CREATE—the database checks for an entity’s existence before adding it.
+By combining idempotency with batching (committing every 1,000 nodes rather
+than the whole graph), you move toward a model of eventual consistency that is
+resilient enough for the messy reality of production enterprise data.
+Schema rigidity and evolution
+While graph databases are often marketed as “schema-less,” a RAG system
+requires a predictable structure to generate valid Cypher or SPARQL queries.
+Unlike SQL, most graph databases lack a simple ALTER TABLE command, so
+when your domain evolves (e.g., when adding new relationship types or splitting
+an entity), you must manage live migrations. This involves running background
+scripts to refactor millions of nodes and edges without downtime. You may want
+to consider schema versioning to ensure the LLM’s query-generation logic stays
+synchronized with the current state of the data.
+304 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Performance
+A multi-hop graph traversal (e.g., for a query like “Find all users who reviewed
+the same product as a user who lives in the same city as the CEO”) may have
+variable latency. The time taken depends on the query’s depth and the graph’s
+structure (e.g., hitting a “supernode”). Since most graphs are memory-intensive,
+provisioning the right hardware (with enough RAM), and making sure it can
+scale both vertically and horizontally, is key. This tends to be a relatively spe‐
+cialized skill: the team will need to learn to profile Cypher/SPARQL queries,
+identify bottlenecks, manage indices (both standard and vector), and potentially
+restructure parts of the graph to avoid “supernode” hotspots.
+Security, backup, and high availability
+Like any stateful database, the graph DB also demands a robust disaster recovery
+plan, with automated, tested backup and restore processes. However, security
+in a graph-powered RAG system adds a layer of complexity beyond standard
+encryption at rest. Because graphs often synthesize data from disparate sources,
+your infrastructure must support RBAC, which may need to be implemented at
+the node or relationship level—ensuring, for example, that an LLM can traverse
+a Company node but is restricted from seeing the Salary property on a connected
+Employee node.
+It’s important to emphasize again that the maintenance overhead is a persistent and
+often underestimated operational cost with graph databases. The core challenge is
+ensuring data freshness and consistency: as source data changes, the graph must be
+updated to reflect the new reality.
+Knowledge graphs are powerful and can significantly increase the quality of respon‐
+ses in your RAG application, but the decision to implement a KG hinges on a
+clear-eyed cost–benefit analysis. Let’s review what is involved in making that decision.
+Graph Update Patterns and Evolution
+In production, your source data is rarely static. Keeping a KG synchronized with liv‐
+ing data requires moving beyond the “full rebuild” approach and toward incremental
+maintenance. This typically involves two primary patterns:
+Ingestion strategies: CDC versus event-driven
+To capture changes in your source systems (like a CRM or a SQL database), you
+need a pipeline that triggers graph updates automatically:
+Change data capture (CDC)
+If your source data lives in a traditional database (e.g., Postgres), you can use
+CDC tools (like Debezium) that listen to the database’s transaction log and
+emit an event every time a row is created, updated, or deleted. These events
+are then mapped to Cypher MERGE or DELETE commands in your KG.
+Building Knowledge Graphs 
+| 
+305
+Event-driven architectures
+For unstructured data (like new PDF files or chat logs), an event-driven pat‐
+tern is preferred. When a new document hits your storage (e.g., S3), it trig‐
+gers a serverless function (like AWS Lambda) that runs the LLM-extraction
+pipeline on only that specific file, appending new nodes and edges to the
+existing graph.
+Handling entity merges
+A common edge case in long-running KGs is when two entities, previously
+thought to be distinct, are discovered to be the same (e.g., “Twitter” and “X”). To
+handle this, you must implement a “merge” logic, where one node’s relationships
+are remapped to the “survivor” node (and the other node is deleted).
+Another challenge is when facts “expire.” For example, if a person leaves a com‐
+pany, the WORKS_AT relationship shouldn’t necessarily be deleted (to preserve
+historical context), but it should be “tombstoned” with a status: "inactive"
+label. Your RAG queries must then be updated to filter for :WORKS_AT {status:
+"active"}.
+Maintaining a living KG requires implementing automated ingestion pipelines (to
+capture real-time data changes), while simultaneously applying internal lifecycle logic
+to resolve identity conflicts and manage the relevance of aging facts.
+The Accuracy/Cost Trade-off
+When building your RAG application, you face a fundamental architectural choice:
+stick with a “vanilla” RAG setup or invest in integrating a knowledge graph. This
+decision is a classic engineering trade-off between the relatively low cost and simplic‐
+ity of vanilla RAG against a potential, but not guaranteed, boost in accuracy. Before
+committing to a graph-based approach, it’s important to understand your particular
+ROI on KGs, and whether the accuracy gains that you actually see justify the increase
+in cost and complexity.
+Don’t underestimate vanilla RAG; it may already meet your requirements without any
+added complexity, is relatively straightforward to implement, and is cost-effective to
+operate. For many applications, like general-purpose question answering or summa‐
+rizing large document sets, finding “directionally accurate” or “semantically relevant”
+context is all the LLM needs to provide a high-quality response.
+Implementing GraphRAG or any of the other approaches we covered for integrating
+KG into your RAG application is not a minor addition; it’s a major commitment. The
+cost isn’t just financial; it’s a heavy tax on development and operational resources. You
+will need to invest heavily in graph data modeling, stand up and maintain new graph
+database infrastructure, and build and maintain complex data pipelines to create and
+keep the graph up-to-date with evolving source data.
+306 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+The truth is that this ongoing maintenance burden is often underestimated and can
+become a significant resource drain. It’s important to honestly assess if your system
+needs this level of precision, and only do so if you see the potential ROI.
+To make this decision actionable, here’s a quick checklist you can use. If you cannot
+answer “Yes” to at least four of these questions, the operational “tax” of a KG may
+outweigh the benefits for your current stage.
+Factual failure
+Do we have recurring multi-hop, time-bound, or highly constrained queries that
+vanilla or hybrid RAG consistently fails on in our evaluations?
+Grounding necessity
+Does the use case require 100% deterministic grounding for specific entities (e.g.,
+legal compliance or medical dosages) where “probabilistic” similarity is too risky?
+Available assets
+Is there an existing ontological asset (a licensed KG like DrugBank or LSEG
+or a standard ontology like FIBO) that we can leverage to avoid building from
+scratch?
+Data connectivity
+Does our data fit naturally with a graph structure? (That is, does the value lie in
+the relationships among documents, such as corporate hierarchies or supply chain
+dependencies, rather than the content of the documents themselves?)
+Long-term ownership
+Do we have a team with the capacity to own graph modeling, schema evolution,
+and complex ETL pipelines for the long term?
+Business ROI
+Are the expected accuracy gains tied to a clear business outcome, such as reduc‐
+ing risk, ensuring compliance, or unlocking new revenue-generating features?
+Conclusion
+In this chapter, we introduced the idea of using knowledge graphs in RAG, with the
+goal of achieving higher quality responses for the types of queries that a KG can help
+answer best.
+While vector search or hybrid search excel at understanding conceptual queries, they
+might not work as well with questions that incorporate time-bound facts, multi-hop
+logic, or overlapping constraints.
+Knowledge graphs, on the other hand, excel at answering these types of questions.
+By integrating KGs into RAG, whether through chunk enrichment or hybrid-graph
+Conclusion 
+| 
+307
+retrieval, you can enable your RAG application to answer more complex questions
+with improved accuracy.
+This advancement, however, is not free; it demands a significant investment in data
+modeling, entity linking, ingestion pipelines, and infrastructure, forcing a crucial
+trade-off between retrieval accuracy and operational complexity and cost.
+Using KGs in RAG is an evolving field, and its future lies in automating the very
+bottlenecks that make it so challenging. The painstaking, manual process of graph
+construction is giving way to LLM-driven pipelines that extract entities and relations
+with high efficiency, provided they are anchored by robust validation layers and
+human oversight. The future of knowledge-enhanced RAG lies in automating these
+bottlenecks while maintaining a “living” graph that can evolve its schema and logic
+as business requirements change. A prominent example of this is Microsoft’s Graph‐
+RAG, which uses large language models to construct a graph directly from source
+documents. However, Microsoft’s specific implementation can introduce significant
+cost and latency and may not be appropriate for every enterprise workload. More
+broadly, knowledge-graph-enhanced RAG can be highly practical when the graph
+architecture is designed around the application’s data model, query patterns, and
+production constraints.
+In practice, most teams start with standard RAG, and use evaluation techniques
+(Chapter 6) to identify problematic queries with insufficient response accuracy, and
+for those, they pilot knowledge-enhanced RAG or GraphRAG.
+Table 9-2 summarizes the key approaches we’ve covered so far in the book, and their
+individual advantages and limitations.
+308 
+| 
+Chapter 9: Knowledge-Enhanced RAG
+Table 9-2. Comparison of RAG architectures across retrieval methods, graph enhancement,
+and agentic orchestration
+Approach
+Best for
+Key limitation
+Cost & complexity
+Standard RAG
+(vector search)
+General Q&A, similarity-based
+retrieval, and unstructured text
+May struggle with multi-hop logic,
+time-bound facts, or hard constraints.
+May miss specific stock keeping units
+(SKUs) or names that do not match in
+semantic search.
+Low. Simple to build and
+maintain.
+Keyword
+hybrid (vector
++ BM25)
+Balancing semantic meaning
+with exact matches
+Still struggles with multi-hop logic and
+deep relationships.
+Low-Medium. Requires
+tuning weights between
+vector and BM25.
+KG-hybrid RAG
+Precise, factual queries with
+multiple constraints (e.g., “Find
+CEOs who also own EVs”)
+Requires building and maintaining an
+up-to-date KG.
+High. Significant data
+engineering required.
+Microsoft
+GraphRAG
+Broad, “sensemaking” queries
+(e.g., “What are the main
+themes in these 1,000 docs?”)
+Very high upfront processing cost. Not
+ideal for real-time data. Lacks verbatim
+granularity.
+Very High. Computationally
+expensive ingestion.
+Agentic RAG
+Multi-hop logic and iterative
+research tasks
+High latency. Agents can get stuck in
+loops or hallucinate tool paths.
+Medium-High. Requires
+robust orchestration
+(LangGraph, etc.).
+The knowledge graph research community continues to innovate with better, simpler,
+and more cost-effective approaches to integrating KGs into RAG and agentic work‐
+flows, and we expect this technology to provide more value and better ROI over time.
+Conclusion 
+| 
+309
+CHAPTER 10
+The Future of RAG
+RAG is arguably one of the most impactful approaches for applying LLMs to private
+enterprise data. Over the last few years, it has graduated from an experimental
+technique to the standard architectural pattern for enterprises that need a ChatGPT-
+like experience grounded in their data, and is now moving quickly from POCs to
+production deployments.
+Throughout this book, you’ve mastered the pillars of RAG: LLMs, embeddings, vec‐
+tor stores, and reranking. You’ve seen how a functional proof of concept can come to
+life over a single weekend. But the leap from a local script to a resilient, production-
+grade ecosystem is where the real engineering begins. It requires moving beyond “it
+works” to solving for latency, accuracy at scale, and long-term maintainability.
+Production RAG is not just about code; it is a distributed system that demands
+rigorous governance and security. You must manage ingestion at scale, ensuring
+data integrity across terabytes of multimodal content. More importantly, you must
+implement a defense-in-depth security strategy, which means deploying entity-aware
+redaction to scrub PII before it hits the model, enforcing strict role-based access
+control so a junior analyst cannot retrieve sensitive HR documents, and maintaining
+comprehensive audit trails for compliance standards like SOC 2, GDPR, and HIPAA.
+Beyond security, you face the operational reality of total cost of ownership, and
+you must manage vendor integration complexity, optimize for latency using decou‐
+pled microservices, and assemble a multidisciplinary team capable of bridging ML,
+DevOps, and security gaps.
+We hope that by now you possess a deep understanding of how RAG works, what
+each component does, and—perhaps most importantly—where the pitfalls lie. But in
+generative AI, the ground is constantly shifting, and we are all bombarded with a
+barrage of new techniques, papers, and vendor announcements every week. It is often
+311

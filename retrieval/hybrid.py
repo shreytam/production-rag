@@ -9,9 +9,39 @@ afterward.
 
 from __future__ import annotations
 
+import logging
+
+from core.config import get_settings
 from core.interfaces import Embedder, Reranker, SparseRetriever, VectorStore
 from core.rrf import reciprocal_rank_fusion
 from core.types import Query, ScoredChunk
+
+logger = logging.getLogger(__name__)
+
+
+_TRACER = None
+
+
+def _embed_traced(embedder: Embedder, query: Query):
+    """Embed the query inside an `embedding`-typed Langfuse observation.
+
+    Always traced (independent of the semantic-cache flag) so every query shows
+    its embedding call: model + dim. Best-effort — tracing must never break
+    retrieval, and no-op tracers make this free when Langfuse is disabled.
+    """
+    from observability.langfuse_tracing import Tracer
+
+    global _TRACER
+    if _TRACER is None:
+        _TRACER = Tracer(get_settings())
+    with _TRACER.span(
+        "dense.embed_query", as_type="embedding",
+        model=get_settings().embed_model,
+    ) as s_emb:
+        qvec = embedder.embed_query(query.text)
+        if qvec is not None:
+            s_emb.update(dim=len(qvec))
+    return qvec
 
 
 class DenseRetriever:
@@ -22,7 +52,7 @@ class DenseRetriever:
         self.vector_store = vector_store
 
     def retrieve(self, query: Query) -> list[ScoredChunk]:
-        qvec = self.embedder.embed_query(query.text)
+        qvec = _embed_traced(self.embedder, query)
         return self.vector_store.search(qvec, query.top_k, query.acl,
                                         collection_id=query.collection_id)
 
@@ -47,7 +77,7 @@ class HybridRetriever:
         self.fuse_window = fuse_window
 
     def retrieve(self, query: Query) -> list[ScoredChunk]:
-        qvec = self.embedder.embed_query(query.text)
+        qvec = _embed_traced(self.embedder, query)
         dense = self.vector_store.search(
             qvec, query.top_k, query.acl, collection_id=query.collection_id
         )
@@ -58,4 +88,17 @@ class HybridRetriever:
         if not fused:
             return []
         window = fused[: self.fuse_window]
-        return self.reranker.rerank(query.text, window, query.rerank_top_n)
+        try:
+            reranked = self.reranker.rerank(query.text, window, query.rerank_top_n)
+            if not reranked and window:
+                # Malformed success response (e.g. empty rankings list):
+                # degrade to fused order rather than answering from zero context.
+                raise RuntimeError("reranker returned no rankings for non-empty input")
+            return reranked
+        except Exception:
+            # Fail-soft (audit HG-2): a reranker outage must degrade ranking,
+            # never kill the query or silently discard retrieval results.
+            logger.warning(
+                "reranker failed; falling back to fused RRF order", exc_info=True
+            )
+            return window[: query.rerank_top_n]

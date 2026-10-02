@@ -20,12 +20,22 @@ Tracer(settings)
 
 from __future__ import annotations
 
+import logging
 import time
 import functools
 from contextlib import contextmanager
 from typing import Any, Generator, Callable
 
 from core.config import Settings
+
+logger = logging.getLogger(__name__)
+
+# Langfuse observation types (https://langfuse.com/docs/observability/features/
+# observation-types) — fetched 2026-08-24. Used to validate tracer.span(as_type=).
+OBSERVATION_TYPES: frozenset[str] = frozenset({
+    "event", "span", "generation", "agent", "tool", "chain",
+    "retriever", "evaluator", "embedding", "guardrail",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +170,11 @@ class Tracer:
 
     @contextmanager
     def span(
-        self, name: str, **metadata: Any
+        self,
+        name: str,
+        *,
+        as_type: str = "span",
+        **metadata: Any,
     ) -> Generator[_NoOpSpan | _LangfuseSpan, None, None]:
         """Context manager that wraps a pipeline stage.
 
@@ -168,9 +182,14 @@ class Tracer:
         methods attach data to the span.  Always safe to call — falls back to
         no-op when disabled.
 
+        ``as_type`` marks the observation with a Langfuse observation type
+        ("span", "retriever", "embedding", "generation", "guardrail", ...) so
+        the UI can filter and price each stage correctly.  An unknown type is
+        demoted to a plain span rather than failing the request.
+
         Example::
 
-            with tracer.span("retrieval", query=q.text) as s:
+            with tracer.span("retrieval", as_type="retriever", query=q.text) as s:
                 hits = retrieve(q)
                 s.update(n_hits=len(hits))
         """
@@ -178,13 +197,17 @@ class Tracer:
             yield _NoOpSpan()
             return
 
+        if as_type not in OBSERVATION_TYPES:
+            logger.warning("unknown observation type %r; falling back to 'span'", as_type)
+            as_type = "span"
+
         # v3/v4: a single context manager opens the observation, makes it the
         # current OTel span, and auto-closes it on exit — no manual .end().
         # Only *creating* the span falls back to no-op; once we're inside the
         # `with`, a caller exception must propagate (and still close the span).
         try:
             span_cm = self._client.start_as_current_observation(
-                as_type="span", name=name, metadata=metadata or None
+                as_type=as_type, name=name, metadata=metadata or None
             )
         except Exception:  # pragma: no cover — never let tracing break the call
             yield _NoOpSpan()

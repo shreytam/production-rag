@@ -39,3 +39,9 @@ payload.json
 # Durable audit logs
 .audit/
 
+
+# Secrets hygiene (2026-08-24): backup env files and the old audit doc
+# contain a live NVIDIA key — never commit or bake into images.
+infra/.env*
+*.bak*
+docs/PRODUCTION_READINESS_AUDIT.md

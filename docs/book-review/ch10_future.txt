@@ -1,0 +1,1313 @@
+1 While realizing that, as Niels Bohr said, “prediction is very difficult, especially about the future.”
+2 Late interaction embedding models typically require 50 times more storage, and significantly higher query-
+time compute, as they perform token-level MaxSim operations rather than simple vector dot products.
+difficult to discern what is a meaningful architectural shift versus what is merely the
+“flavor of the week” or vendor marketing.
+In this final chapter, we look forward and attempt to separate signal from noise,
+providing our insights on the meaningful trends that will define the next generation
+of RAG.1
+The Evolution of Retrieval
+The retrieval layer is no longer a static utility, but a rapidly evolving frontier. The
+underlying components that comprise your retrieval pipeline continue to improve,
+as we are moving beyond the era of “good enough” retrieval into a new standard of
+precision:
+Late interaction embeddings
+Standard embedding models compress a document chunk into a single embed‐
+ding vector. “Late interaction” models like ColBERT keep vectors for every token
+and delay the final embedding computation until the query phase. This often
+allows for finer-grained matching and provides better overall accuracy, although
+it comes at the cost of higher storage and memory requirements.2
+Nuanced rerankers
+We are seeing better rerankers that are not only more accurate in general (when
+compared to previous generations of rerankers), but also can follow instructions,
+allowing them to rerank text with the nuance of a specific domain like the law or
+healthcare.
+Native multimodal retrieval
+As research in multimodal generative AI continues to progress and multimodal
+models improve in both accuracy and speed, we are moving past the era of
+simply captioning images and indexing the text. As discussed in Chapter 8, RAG
+pipelines evolve to utilize native multimodal embeddings that map multimodal
+data into the same vector space as the text. ColPali adapts the late interaction
+approach to visual patches, enabling more accurate native retrieval of complex,
+multimodal documents.
+Graph-augmented retrieval
+We expect that the tools and techniques used to build and scale knowledge
+graphs will become increasingly automated. While they remain most effective
+in domains with stable, high-value structured knowledge and teams willing to
+312 
+| 
+Chapter 10: The Future of RAG
+invest in ontology and entity resolution, this automation will drive higher adop‐
+tion. In turn, KGs will allow RAG pipelines to power more accurate responses to
+complex, multi-hop questions, like “How does the supplier mentioned in the Q3
+report relate to the risk factors listed in the legal compliance doc?”
+The raw components of retrieval in RAG are finally catching up to the ambition of
+its architecture, transforming the retrieval layer into a high-precision instrument that
+can deliver accurate responses at scale.
+The Shift to Agentic RAG
+Retrieval has historically been the “System 1” of AI—fast and intuitive, but linear.
+Whether it’s powered by semantic, lexical, or hybrid search, the goal is simple:
+identify relevant text chunks and pass the most relevant ones downstream to the
+generative LLM. It is a “one-shot” pipeline that works well for many use cases but may
+fail when faced with more nuance.
+The future of RAG in production is moving rapidly toward “System 2” thinking,
+using agentic RAG (as we saw in Chapter 7), where the system doesn’t just retrieve; it
+plans, reasons, and orchestrates tools in an iterative manner.
+In an agentic workflow, the LLM is no longer just a summarizer at the end of the
+pipeline; it is the controller. It can decompose a vague user request into a specific
+plan, execute multiple distinct retrieval steps (via tool calls), and even self-reflect on
+its own results.
+If the retrieved documents don’t answer the question, a standard RAG pipeline often
+hallucinates or refuses to respond, saying “I don’t know.” An agentic pipeline detects
+the gap and issues a new, updated search query (which may repeat multiple times)
+until it finds the necessary information to properly answer the user’s query.
+This moves RAG from a “search engine” to a “reasoning engine.”
+What’s more, since tools can take action (not just retrieve data), the breadth of
+use cases covered by AI agents is larger and, in many cases, more impactful. For
+example, a customer support chatbot based on agentic RAG can not only answer a
+user question, but also open up a support ticket, update its priority, and so on.
+While the shift toward a “reasoning engine” is compelling, it introduces a significant
+engineering tax that differentiates production agents from simple demos. Moving
+from the linear, one-shot RAG to an iterative loop creates an observability gap, where
+debugging a failure requires tracing a complex trajectory of multiple reasoning steps,
+tool calls, and self-reflections rather than a single retrieval. This also impacts latency
+and cost: a query that once took two seconds can now take thirty seconds or more,
+The Shift to Agentic RAG 
+| 
+313
+requiring strict deterministic guardrails (such as iteration caps and budget limits) to
+prevent expensive “runaway loops,” where the agent fails to converge on an answer.
+Ultimately, the transition to agentic RAG represents a trade-off between autonomy
+and control. While agents can handle much broader and more impactful use cases,
+they demand a more mature and sophisticated infrastructure when deployed to
+production.
+The Reality of Data Gravity and Federated Retrieval
+As enterprises continue to adopt agentic AI, they must also confront a practical
+reality of enterprise data: data gravity.
+In production, the idea of “index all your enterprise data in your vector store” is often
+a fantasy: financial data lives in Snowflake; customer logs reside in Elasticsearch; reg‐
+ulatory documents sit in specialized legal vaults. Moving petabytes of live, governed
+data into a RAG data store is not just an engineering nightmare; if not handled
+properly it can lead to compliance violations.
+Instead of moving the data to the model, we expect a shift to federated retrieval—
+leaving the data where it is and bringing the query to the source. In this model, the
+agentic system uses tools (directly or via MCP servers) to query datasets in their
+native environments (e.g., executing SQL against a data warehouse).
+However, this federated approach introduces a critical dependency: can the native
+environment provide accurate data to the agent via tool calls? When you rely on
+federated retrieval, you are at the mercy of the native retrieval capabilities of the
+external system called by the tool. If an agent queries a legacy document store that
+relies on inaccurate keyword search (BM25) and receives irrelevant results, its ability
+to accurately answer the user query is restricted.
+For federated retrieval to succeed, we don’t need smarter agents; we need better
+ways to modernize retrieval in legacy systems by integrating semantic understanding,
+hybrid search, reranking, and text2SQL.
+The Impact of Longer Context
+With LLMs now boasting context windows of one million or even ten million tokens,
+a common question arises: Is RAG really necessary? Why not just paste the whole text
+into the prompt?
+The reality is that the debate shouldn’t be “RAG versus long context”—the future lies
+in context-aware RAG.
+Long context windows don’t kill RAG; they make it more powerful. Instead of RAG
+being a tool to find tiny, disjointed snippets to fit into a cramped 4k context window,
+314 
+| 
+Chapter 10: The Future of RAG
+3 Nothing, of course, is infinite, but if you think about a context length of 2048 for GPT-3, 10M tokens feels like
+infinity.
+4 It’s important to mention that many LLM providers like Anthropic, Google, and OpenAI do provide prompt
+caching, which provides some cost/latency reduction in long-context RAG. This is quite helpful but does not
+solve the fundamental problem.
+it evolves into a high-precision filter that feeds the model larger, more coherent
+“narrative” chunks. This allows the model to maintain the nuance of a full chapter
+or a complete technical spec while still benefiting from the lower cost and noise
+reduction of retrieval.
+The truth is, RAG is far from obsolete; it is simply shifting its focus toward context
+engineering.
+From Prompt Engineering to Context Engineering
+Even with what seems like nearly infinite3 context windows, three critical constraints
+remain:
+Cost
+Processing 10 million tokens for every single user query is expensive for high-
+volume enterprise use cases.
+Latency
+Waiting 60 seconds4 for the model to “read” a large set of documents before
+answering every simple question might create an unacceptable user experience.
+“Lost in the middle”
+Research demonstrates that LLMs struggle to prioritize specific details buried
+in the middle of a massive context window compared to information at the
+beginning or end.
+Moreover, whatever the actual context window limit is (say 10M tokens), it’s difficult
+to imagine that all of your enterprise data will fit into that size.
+Every RAG query is, therefore, all about filtering a massive enterprise dataset down
+to a high-quality “shortlist” of information bits that fit comfortably into the LLM’s
+context window, and this is the most relevant information that the LLM requires to
+do its job.
+The term context engineering reflects this idea of dynamically assembling the perfect
+prompt: blending the retrieved facts, the user’s history, and the system instructions
+into a package that maximizes accuracy while minimizing cost and latency, as shown
+in Figure 10-1.
+The Impact of Longer Context 
+| 
+315
+5 While proactive observation may maximize contextual relevance, it introduces critical challenges regarding
+data privacy, continuous consent, and local versus cloud processing.
+RAG effectively becomes the attention mechanism for the long-context LLM, deciding
+what is worthy of the model’s expensive focus.
+Figure 10-1. We might see the filtering function of RAG as a form of attention mecha‐
+nism, allowing us to select (or “pay attention to”) the most relevant chunks from the full
+enterprise dataset for the LLM’s context window
+The Shift from Reactive to Proactive RAG
+Larger context windows have another benefit: they allow the system to treat the user’s
+entire digital environment as a prompt. The system can now silently observe the
+user’s screen, recent logs, and open documents5—data that would previously overflow
+a standard window—to understand intent implicitly.
+This is the idea behind a proactive RAG architecture, where the system operates in the
+background.
+For example, as a human support agent opens a ticket about a “broken hydraulic
+pump,” the RAG system analyzes the screen in real time. Before the agent even types
+a query, the system can retrieve the pump’s schematics and the last three similar
+resolved tickets, displaying them in a sidebar. In this setting, the query is implied by
+context rather than explicitly typed by the end user.
+Proactive RAG does not wait to be asked; it provides the right answer the moment it
+is needed.
+316 
+| 
+Chapter 10: The Future of RAG
+RAG at the Edge: Small Language Models
+Traditionally, building a high-quality RAG system presented a difficult choice: either
+rely on public cloud APIs (sacrificing data privacy for ease of use) or maintain large
+internal GPU clusters to self-host frontier-class models. While air-gapped systems
+have always been possible with large open source LLMs, the infrastructure overhead
+can be a significant barrier for most organizations.
+The rise of small language models (SLMs)—highly efficient models (often less than
+32B parameters, but often even as small as 4B or 8B parameters) that punch far above
+their weight class—continues to change this calculus.
+These models enable a “local-first” or air-gapped RAG architecture that provides full
+control over data and infrastructure without the need for data center-scale hardware,
+providing the following key advantages:
+Production readiness and ease of hosting
+While moving away from a hosted API introduces the responsibility of managing
+inference hardware, SLMs reduce long-term operational risk. For production
+engineers, the most immediate advantage of SLMs is that they transform the
+generative step from a “black box” API into a predictable software component.
+By running on commodity hardware (instead of expensive multi-GPU clusters),
+SLMs allow the RAG pipeline to be versioned, tested, and deployed within the
+same CI/CD cycles as the rest of the application, eliminating the cascading
+failures often caused by external API deprecations or rate-limit throttling.
+Bringing the engine to the data
+In regulated sectors like healthcare, defense, and finance, sending sensitive PII or
+intellectual property (IP) to a public provider is often a nonstarter. SLMs allow
+enterprises to bring the reasoning engine to the data, rather than sending the data
+to the engine.
+This inversion means sensitive documents never leave the secure perimeter,
+addressing any privacy compliance hurdles that stall many RAG projects in the
+POC phase.
+Transforming the economic model
+Moving from cloud APIs to local SLMs fundamentally changes the unit econom‐
+ics of production RAG. Instead of the variable cost of token-based pricing, you
+shift to a flat fee for the hardware. For high-volume RAG applications, this can
+potentially reduce the total cost of ownership by orders of magnitude.
+This economic shift is even more critical for multimodal RAG, where the high
+cost of vision–language model (VLM) API calls and the latency of transferring
+large visual assets can be prohibitive. As local SLMs gain multimodal capabilities,
+RAG at the Edge: Small Language Models 
+| 
+317
+we expect adoption to accelerate as organizations bypass the cost, latency, and
+data-residency hurdles associated with processing sensitive visual or audio assets
+in the cloud.
+Local inference also eliminates network round trips, resulting in nontrivial
+latency benefits, and providing the experience users expect in production
+applications.
+Ultimately, as SLMs improve in accuracy and reasoning capabilities, RAG is being
+enabled for a broader set of use cases, even those with strong data privacy, latency, or
+uptime requirements, that are difficult to achieve with external API calling.
+Governance and Compliance at Scale
+As we discussed in Chapter 4, the transition from POC to production often hits a
+wall, not due to technology, but due to governance, risk, and compliance (GRC). As
+RAG and AI agents power more mission-critical enterprise applications, these con‐
+cerns will move from being afterthoughts to being core architectural requirements, a
+shift largely driven by emerging regulatory frameworks such as the EU AI Act.
+RAG systems must become “compliance-aware” by design, which involves solving
+three complex challenges that rarely appear in a POC:
+Data sovereignty
+You cannot simply dump all global data into a single database. Production RAG
+applications will likely need to support multiple regions, intelligently routing user
+queries to specific regional indices (e.g., routing a German employee’s query to a
+Frankfurt-hosted vector store) to ensure data never crosses borders illegally.
+The “right to be forgotten” (GDPR/CCPA)
+Deleting a user from a standard database is easy; deleting them from a vector
+and/or lexical database encoding document chunks is harder. If a user exercises
+their right to be forgotten, you must be able to trace and surgically remove every
+chunk derived from their data. This requires robust metadata tagging strategies
+at the ingestion layer, as re-indexing terabytes of data from scratch is not a viable
+operational strategy.
+Auditability and explainability
+It is no longer enough to provide an answer; many production enterprise RAG-
+based applications must be able to prove why an answer was given. We expect
+increased adoption of immutable audit logs for RAG, capturing the “chain of
+provenance”—linking the specific prompt, the exact document version retrieved,
+and the generated output as citations. This is critical for defending against liabil‐
+ity in sectors like finance or the law, where a hallucination can have significant
+real-world legal or monetary consequences.
+318 
+| 
+Chapter 10: The Future of RAG
+This new regulatory landscape fundamentally changes how we build RAG applications,
+replacing the subjective “vibe check” with strict evaluation-driven development. As dis‐
+cussed in Chapter 6, this shift moves evaluation from a post-launch diagnostic to a core
+part of the CI/CD pipeline: no model or prompt change is deployed unless it passes
+through automated evaluation gates that test for faithfulness and relevancy against
+a golden dataset. This turns governance from a set of static rules into a dynamic,
+automated safeguard that protects both the user and the organization.
+Bottom line: the organizations that succeed in the next era of RAG will not just be
+those with the smartest LLMs, but those that can wrap those models into a trusted,
+transparent, and secure operational RAG pipeline.
+Conclusion: The Living Knowledge Base
+We started this book with the mechanics of RAG: splitting text, storing embedding
+vectors, crafting an LLM prompt, and managing latency. We end it with a realization
+that these are merely the foundation for something much larger. You are no longer just
+building “search engines” or “chatbots.” You are building the corporate brain.
+For the entirety of corporate history, institutional knowledge has been fragmented—
+locked in the minds of current or previous employees, buried in forgotten folders, or
+siloed in systems that couldn’t talk to one another. The promise of the RAG-based
+systems you will build in the coming years is the unification of that knowledge.
+In the next era, the RAG pipelines you design will evolve from passive utilities
+into proactive partners. They will not just answer questions; they will connect dots
+that a human may miss, and ensure that every decision made in your organization
+is informed by the collective intelligence of the entire enterprise. As you build
+toward this future, treat the core patterns we have explored—RAG, tool use, agents,
+knowledge graphs, and evaluators—as your stable foundation, even as LLMs, vector
+databases, agentic frameworks, and guardrails continue to shift and evolve.
+As you close this book, remember that the RAG components will change. Vector
+databases will commoditize, context windows will expand, and LLMs will reason with
+incredible speed and accuracy. Do not get too attached to the stack, though—focus
+instead on the mission.
+The future of RAG is not about a specific algorithm. It is about the transition of
+software from a tool we use to an intelligence we collaborate with, in an enterprise
+context.
+The pitfalls we discussed—hallucinations, drift, security, privacy, latency—are real. The
+engineering challenges are large, but the opportunity is even larger. You now possess
+the blueprint to turn a mountain of static data into a living, breathing engine of insight.
+The foundation is laid. The tools are in your hands. Now, it is time to build.
+Conclusion: The Living Knowledge Base 
+| 
+319
+Index
+A
+A/B testing, 187
+A2A (see Agent2Agent (A2A))
+Actor Model, 191
+Agent Card, 211
+agent orchestration, 193
+Agent2Agent (A2A), 209-211
+agentic loop, 202-206
+action, 203
+observation, 202
+reasoning and planning, 203
+agentic memory, 227-229
+file-based memory, 228
+long-term memory, 227
+user identity tracking, 227
+session consolidation, 228
+session-based storage, 228
+short-term memory, 227
+agentic RAG, 20, 192, 280, 313
+agentic search, 214
+agentic stack, 193-195
+AI agent observability, 229-235
+human handoff rate, 234
+inference latency, 233
+LLM and API call counts, 233
+token usage, 233
+tool call success/failure rate, 233
+AI agents, 192-235, 313
+administrative workflow automation, 200
+clinical trial management, 200
+coding agents, 201
+goal misinterpretation, 230
+incorrect tool use, 230
+investment memo, 199
+personalized treatment plans, 200
+plan generation failures, 230
+regulatory analysis, 199
+response hallucination, 230
+tool hallucination, 230
+use cases, 198-202
+verification and termination failures, 231
+virtual health assistants, 200
+AI assistants, 192
+AI engineering (AIE), 122
+air-gapped environment, 144
+Airbyte, 69, 139
+Airbyte Cloud, 139
+Alexa, 192
+all-in-one enterprise model, 143
+Amazon Bedrock, 182
+Amazon Bedrock AgentCore, 195
+Amazon Bedrock Knowledge Bases, 145
+Amazon S3, 129
+Amazon Textract, 240
+Amazon Web Services (AWS), 144
+ANN (see approximate nearest neighbor
+(ANN))
+answer accuracy, 176
+answer relevancy, 176
+answer similarity, 176
+Anthropic, 60
+Claude, 60, 182
+Claude Code, 201
+Claude Sonnet 4.5, 214
+Antigravity, 201
+Apache Airflow, 68
+Apache Beam, 69
+Apache Kafka, 112
+321
+Apache Spark, 68
+approximate nearest neighbor (ANN), 50
+(see also vector databases)
+Arize Phoenix, 235
+ASR (automatic speech recognition), 237
+assistant-ui, 101
+(see also user experience (UX))
+asynchronous evaluation pipeline, 186
+Atlassian, 210
+atomicity, 304
+attention mechanism, 316
+audio and video in RAG, 265-271
+captioning, 270
+fixed-interval frame extraction, 269
+frame embedding, 270
+keyframe extraction, 270
+temporal segment extraction, 270
+auto-scaling, 110
+automatic failover, 123
+automatic speech recognition (ASR), 237
+autonomy alignment, 234
+AutoNuggetizer, 175
+awesome-agent-failures website, 231
+(see also AI agents)
+AWS (Amazon Web Services), 144
+AWS Lambda, 306
+Azure (see Microsoft Azure)
+Azure AI Search, 145
+Azure Document Intelligence, 240
+B
+Base64 encoding, 46
+Belief-Desire-Intention (BDI) model, 191
+benchmark dataset, 186
+BERT (Bidirectional Encoder Representations
+from Transformers), 44
+(see also embedding models)
+bge-reranker-v2, 80
+(see also reranking)
+bilingual evaluation understudy (BLEU), 276
+bill of materials (BOM), 238
+blind verification workflow, 276
+BLIP-3-Video, 270
+blur-on-ingest, 274
+BOM (bill of materials), 238
+Box, 139
+bring-your-own (BYO) embedding model, 135
+bring-your-own (BYO) LLM, 138
+C
+caching, 66, 111-115
+cache invalidation, 112
+chunk cache, 112
+eviction strategy, 114
+full response cache, 112
+horizontal scaling, 115
+retrieval cache, 112
+California Consumer Privacy Act (CCPA), 140
+candidate generation, 75
+(see also two-stage retrieval pipeline)
+capital expenditures (CAPEX), 123
+cascading model approach, 124
+CCPA (California Consumer Privacy Act), 140
+CDC (see change data capture (CDC))
+centralized prompt governance, 138
+chain of provenance, 318
+chain-of-thought (CoT), 58, 232
+chained reranking, 83
+(see also reranking)
+champion-challenger pattern (evaluation), 187
+change data capture (CDC), 74, 305
+chatbots, 14, 97, 198
+chunk enrichment, 287
+chunking, 25, 37-43, 127, 242
+audio, 266
+content-aware, 40
+document-structure, 40
+fixed-size, 39
+headless chunks, 243
+recursive, 40
+semantic chunking, 40, 127
+sentence chunking, 149
+sentencizers, 40
+CI/CD (see continuous integration and contin‐
+uous delivery (CI/CD))
+citation accuracy, 177
+citation precision, 177
+citations, 5, 98
+inline, 175
+ClickHouse, 235
+CLIP (Contrastive Language-Image Pretrain‐
+ing), 258
+code injection, 87
+cognitive precision, 226
+Cohere, 129
+Embed v4, 133
+ColPali, 312
+community detection, 298
+322 
+| 
+Index
+compliance deletion, 229
+Confluence, 139
+container orchestration, 144
+containerization, 121
+Docker, 106
+Kubernetes, 106, 144
+context engineering, 315-316
+context precision, 129
+context recall, 129
+context utilization, 175
+continuous batching, 111
+continuous integration and continuous delivery
+(CI/CD), 6, 185
+Contrastive Language-Image Pre-training
+(CLIP), 258
+contrastive representation learning, 259
+corpus, 5, 146
+cosine similarity, 27, 136
+cost monitoring, 124, 188
+budget-based alerting, 124
+cost optimization, 65-66
+CoT (see chain-of-thought (CoT))
+CrewAI, 223-227
+CRM (customer relationship management),
+140
+cross-encoder, 79
+(see also reranking)
+cross-modal embedding, 269
+Cursor, 201
+custom reranking, 83
+(see also reranking)
+customer relationship management (CRM),
+140
+cybersecurity controls, 123
+Cypher, 282
+D
+Dask, 68
+data connectors, 139
+data engineering, 121
+data gravity, 314
+data ingestion, 66-75
+(see also ingestion flow)
+boilerplate text, 70
+brittleness, 68
+content staleness, 162
+deep observability, 69
+idempotency, 69, 304
+parallel processing, 68
+pipeline orchestration, 68
+stepwise optimizations, 68
+structural parsing error, 162
+text encoding, 70
+data leaks, 117
+data parsing, 119
+data security and privacy, 115-119
+data silos, 140
+data sovereignty, 318
+Data Universal Numbering System (D-U-N-S),
+297
+Datavolo, 140
+DCG (discounted cumulative gain), 172
+Debezium, 305
+decay policy, 229
+deep tracing, 275
+DeepEval, 181
+Deepgram, 265
+DeepSeek, 118, 194
+DeepSeek-R1, 129
+defense-in-depth, 115
+denial-of-wallet attack, 124
+dense retrieval (see semantic search)
+deployment options, 143
+developer-centric consumption model, 142
+DevOps, 6, 185
+discounted cumulative gain (DCG), 172
+diversity reranking (see maximum marginal
+relevance (MMR))
+do-it-yourself (DIY), 133
+document embedding, 127
+document extraction, 127
+document parsing, 28-37
+Beautiful Soup, 29
+Docling, 240
+Gmft, 240
+PDF Extract API (Adobe), 29
+PDFMiner, 29
+pdfminer.six, 29
+PyMuPDF, 29
+pypdf, 29
+PyPDF2, 29
+python-docx, 29
+Unstructured, 29, 240
+document versioning, 162
+DOCX, 29
+dot product, 27
+Dragonfly, 111
+Dropbox, 139
+Index 
+| 
+323
+DrugBank, 297
+dual-encoder architecture, 258
+dynamic embeddings (see embeddings, contex‐
+tualized embeddings)
+E
+EHRs (see electronic health records (EHRs))
+Elasticsearch, 78, 314
+electronic health records (EHRs), 200
+embedded images, 250-265
+embedded tables, 238-248
+stitching layer, 246
+structured context pattern, 244
+embedding models, 43-49, 135
+BGE-M3 (BAAI), 45
+Elman network, 44
+Qwen3 Embedding, 45
+Sentence Transformers, 46, 80
+vector dimensions, 136
+Word2Vec, 44
+skip-gram, 44
+embeddings, 5, 43
+contextualized embeddings, 44
+dense representation, 44
+encryption, 117
+engineering tax, 313
+ENN (see exact nearest neighbors (ENN))
+Enterprise Data Management (EDM) Council,
+296
+entity explosion, 292
+entity ID, 162
+entity identification, 294
+entity linking, 294
+candidate generation, 295
+normalization, 295
+entity merges, 306
+error rate, 188
+ETL (see extract, transform, load (ETL))
+EU AI Act, 318
+evaluation, 59-60, 125, 157-188, 292
+BEIR (benchmark), 41
+BERTScore, 41, 176
+F1-score@k, 170
+LLM-as-a-judge, 59, 92, 164-168
+measurement, 184
+offline, 157
+online, 157
+precision@k, 169
+RAGBench, 41
+recall@k, 169, 276
+tuning, 184
+VLM-as-a-judge, 276
+evaluation drift, 185
+evaluation flywheel, 187
+evaluation gate, 185
+evaluation harness, 241
+evaluation-driven development, 319
+event-driven architectures, 306
+eventual consistency, 304
+Exa, 214
+exact nearest neighbors (ENN), 50
+(see also vector databases)
+extract, transform, load (ETL), 6, 115, 304
+F
+Facebook AI Similarity Search (FAISS), 51, 211
+(see also approximate nearest neighbor
+(ANN))
+factual consistency score, 153, 176
+faithfulness, 176
+fan-out/gather pattern, 110
+federated retrieval, 314
+Financial Industry Business Ontology (FIBO),
+296
+fine-tuning, 10-12, 138
+frames per second (FPS), 269
+function calling (see tool calling)
+G
+G-Eval metric, 182
+GDPR (General Data Protection Regulation),
+117
+GenAI Special Interest Group (SIG), 234
+General Data Protection Regulation (GDPR),
+140
+SaaS compliance, 144
+generation failures, 160-162
+answer relevance failure, 161
+context utilization failure, 161
+faithfulness failure, 160
+GitHub Copilot, 200
+Gmail, 140
+golden answer, 176
+golden chunks, 170
+golden path, 141
+Google, 265
+Agentspace, 195
+Chirp, 265
+324 
+| 
+Index
+Gemini CLI, 201
+Google Cloud, 144
+Google Cloud Document AI, 240
+Google Cloud Vertex AI Search, 145
+Google Drive, 139
+governance, risk, and compliance (GRC), 318
+auditability and explainability, 318
+GPT-4o mini, 8
+graded relevance, 172
+graph database, 119, 282
+Amazon Neptune, 282
+DuckDB, 303
+infrastructure, 303-305
+Kuzu, 282
+Neo4j, 282
+Neo4j AuraDB, 303
+performance, 305
+security and backup, 305
+TigerGraph, 282
+graph look-up, 287
+GraphRAG, 22, 119, 297-303
+building a knowledge graph, 298
+global_search, 300
+latency-sensitive queries, 302
+local_search, 300
+querying, 298
+rapidly changing corpora, 302
+verbatim citations requirement, 303
+GRC (see governance, risk, and compliance
+(GRC))
+gRPC, 120
+guardrails, 6, 83-88, 118, 177, 229-231
+AI safety, 83
+bias detection, 84
+H
+HA (see high availability (HA))
+hallucinations, 1, 88-95, 108, 160
+benign, 91
+conflict management, 90
+contradictions, 90
+correction, 95, 138, 153
+correction model, 95
+detection, 6, 92-94, 138
+factual inaccuracies, 89
+misinterpretation of context, 90
+nonsensical responses, 89
+questionable hallucinations, 91
+retrieval failure, 90
+spectrum of factuality, 108
+unfaithful generation, 90
+unwanted, 92
+visual sycophancy, 275
+hard negative test set, 277
+hash-based tracking, 116
+Health Insurance Portability and Accountabil‐
+ity Act (HIPAA), 19, 143
+HHEM (see Hughes Hallucination Evaluation
+Model (HHEM))
+Hierarchical Navigable Small World (HNSW),
+50, 111
+high availability (HA), 123
+HIPAA (see Health Insurance Portability and
+Accountability Act (HIPAA))
+HippoRAG, 291
+HITL (see human-in-the-loop (HITL))
+HNSW (see Hierarchical Navigable Small
+World (HNSW))
+HubSpot, 140
+Hugging Face, 84, 181, 261, 284
+Gradio, 101
+smolagents, 195
+HuggingFace, 46
+Hughes Hallucination Evaluation Model
+(HHEM), 59, 92, 176
+(see also evaluation)
+human-in-the-loop (HITL), 19, 178, 202
+hybrid extraction strategy, 294
+hybrid search, 5, 27, 76-78, 137
+weighted average of scoring, 78
+hybrid-graph retrieval, 287
+I
+IDE (integrated development environment),
+201
+identity and access management (IAM), 303
+image extraction, 150
+image summarization, 252-258
+IMDb dataset, 280
+in-context learning, 20
+index freshness, 64
+incremental updates, 73
+real-time indexing, 73
+inference server, 111
+TensorRT-LLM, 111
+Text Generation Inference (TGI), 111
+vLLM, 111
+information retrieval (IR) metrics, 169
+Index 
+| 
+325
+ingestion flow, 24-26
+integrated development environment (IDE),
+201
+intelligent sampling, 187
+Inverted File Product Quantization (IVFPQ),
+111
+inverted index, 76
+(see also keyword search)
+IR metrics (see information retrieval (IR) met‐
+rics)
+ISO/IEC 27001, 116
+IVFP (Inverted File Product Quantization), 111
+J
+Jaro–Winkler distance, 296
+Jira, 121, 139
+JoyCaption, 270
+K
+key performance indicator (KPI), 129, 183
+KeyDB, 112
+keyword search, 27
+BM25, 27, 77
+sparse vectors, 27
+KGs (see knowledge graphs (KGs))
+Kimi, 138
+knowledge context, 288
+knowledge graphs (KGs), 21, 119, 280-307, 312
+edges, 280
+graph-augmented retrieval, 313
+intersection of multiple constraints, 279
+nodes, 280
+properties, 281
+time-bound facts, 279
+KPI (see key performance indicator (KPI))
+L
+LanceDB, 8
+LangChain, 8-9, 112, 139, 211-214, 253, 285
+LangChain Expression Language (LCEL),
+256
+Langfuse, 235
+LangSmith, 235
+LanguageBind, 258
+large language models (LLMs), 1, 55-61
+FlashAttention, 56
+Ollama, 56
+quantization, 56
+vLLM, 56
+late interaction embeddings, 312
+latency, 109-115, 187
+tail latency, 110, 187
+LayoutLM, 274
+least recently used (LRU), 114
+lexical search, 5
+Linux Foundation, 210
+LiteLLM, 125
+live migrations, 304
+LlamaCloud, 139
+LlamaIndex, 84, 139, 195
+LlamaParse, 240
+LLaVA-Video, 271
+LLM router, 124
+LLMOps (see DevOps)
+LLMs (see large language models (LLMs))
+long-horizon tasks, 202
+lost in the middle effect, 41, 315
+LRU (see least recently used (LRU))
+LSEG, 297
+M
+machine learning engineering (MLE), 121
+machine reading comprehension (MRC), 41
+(see also evaluation)
+MAP (mean average precision), 171
+MAS (see multi-agent system (MAS))
+Massive Text Embedding Benchmark (MTEB),
+45
+(see also embedding models)
+Matryoshka Representation Learning (MRL),
+45
+(see also embedding models)
+max turns constraint, 206
+maximum marginal relevance (MMR), 27, 82
+(see also reranking)
+MCP (see Model Context Protocol (MCP))
+mean average precision (MAP), 171
+mean reciprocal rank (MRR), 41, 171
+(see also evaluation)
+Meltano, 140
+memory poisoning, 229
+Meta, 51
+ImageBind, 258
+Llama 3.3 70B, 38
+Llama 4, 118
+Llama Guard, 84, 178
+metadata, 30, 150
+326 
+| 
+Index
+metadata filtering, 30
+ACORN, 52
+post-filtering, 52
+pre-filtering, 52
+microservices, 110
+Microsoft AutoGen, 195
+Microsoft Azure, 144
+Microsoft Research, 297
+Mistral, 144
+MLE (machine learning engineering), 122
+MLLMs (see multimodal large language models
+(MLLMs))
+MLOps (see DevOps)
+MMR (see maximum marginal relevance
+(MMR))
+modality alignment, 272
+Model Context Protocol (MCP), 206-210, 314
+client, 207
+in enterprise agentic AI, 208
+host, 207
+Prompts primitive, 207
+Resources primitive, 206
+server, 207
+stdio transport, 208
+Streamable HTTP transport, 208
+Tools primitive, 206
+MongoDB, 136
+MovieSum dataset, 284
+MRC (see machine reading comprehension
+(MRC))
+MRL (Matryoshka Representation Learning),
+45
+MRR (see mean reciprocal rank (MRR))
+MTEB (see Massive Text Embedding Bench‐
+mark (MTEB))
+multi-agent system (MAS), 191
+collaborative architecture, 196
+design paradigm, 195
+distinct security domains, 197
+organizational boundaries, 197
+supervisor architecture, 196
+vast tool surfaces, 197
+multi-hop reasoning, 22, 160, 280
+multi-region deployments, 123
+multimodal large language models (MLLMs),
+21, 237
+multimodal processing, 144
+multimodal RAG, 21, 101, 237-277
+conversion approach, 237
+hallucinations and evaluation, 275-277
+native approach, 237
+production considerations, 271-275
+multimodal retrieval, 252-265
+native, 312
+shared embedding space, 258
+multiturn coherence, 234
+multiturn conversations, 97
+N
+named-entity recognition (NER), 285
+natural language generation (NLG), 59
+natural language processing (NLP), 40
+nDCG (see normalized discounted cumulative
+gain (nDCG))
+near real-time (NRT), 73
+NER (named-entity recognition), 285
+net promoter score (NPS), 158
+NiFi, 140
+NLG (natural language generation), 59
+NLP (natural language processing), 40
+NLTK (Natural Language Toolkit), 40
+no-regression policy, 186
+normalized discounted cumulative gain
+(nDCG), 41, 172
+Not Diamond, 125
+Notion, 129, 139
+NPS (net promoter score), 158
+NRT (near real-time), 73
+Nuclia, 145
+Nvidia, 38, 111
+A100, 111
+H100, 111
+O
+OAuth 2.0, 120, 148
+OCR (see optical character recognition (OCR))
+on-premises deployment, 118, 144
+hardware infrastructure, 144
+local model inference, 144
+operational overhead, 144
+ontology, 284
+OOM (out-of-memory), 71
+Open RAG Eval, 179-180
+open-weight model, 138
+OpenAI, 57
+ChatGPT, 200
+Codex, 201
+gpt-oss, 118, 194
+Index 
+| 
+327
+Whisper, 265
+OpenCLIP, 258
+OpenSearch, 78
+OpenTelemetry (OTel), 234
+operational expenditures (OPEX), 123
+optical character recognition (OCR), 25, 70,
+239
+(see also document parsing)
+Tesseract, 29
+orchestrator service, 110
+orchestrator-worker pattern, 197
+ordering bias, 161
+orphan chunks, 273
+OTel (see OpenTelemetry (OTel))
+out-of-memory (OOM), 71
+Outlook, 140
+output validation, 206
+overestimation bias, 165
+P
+paged attention, 111
+pairwise comparison, 164
+parallel tool calling, 205
+parallelization, 110
+parametric knowledge, 3
+pay-as-you-go pricing, 134
+PDF (Portable Document Format), 29
+Permanent Identifier (PermID), 297
+permission-based filtering, 117
+(see also role-based access control (RBAC))
+personally identifiable information (PII), 7, 115
+unstructured PII leakage, 274
+PHI (protected health information), 115
+pixel sanitization, 274
+platform lock-in, 134
+POC (see proof of concept (POC))
+pointwise comparison, 164
+policy drift, 140
+PostgreSQL, 52, 112
+PostScript, 29
+precision–recall trade-off, 170
+Presidio, 116
+proactive RAG, 316
+production architecture, 125-128
+prompt engineering, 57, 108, 137
+prompt injection, 7, 86-88, 231
+direct attacks, 86
+indirect attacks, 87
+input sanitization, 87
+instruction defense, 88
+visual prompt injection, 274
+proof of concept (POC), 9, 105-132
+protected health information (PHI), 115
+Pydantic AI, 195
+Q
+queries per second (QPS), 64, 188
+query embedding, 127
+query flow, 26-28, 152
+query rewriting, 26
+retrieval query, 27
+query-focused summarization (QFS), 297
+question answering (QA), 18, 41
+Qwen, 118
+Qwen3-Embedding-0.6B, 133
+R
+RAG (see retrieval-augmented generation
+(RAG))
+RAG platform, 133-156
+RAG sprawl, 140
+RAG stack, 23-62, 184
+RAG tool, 203
+RAG-as-a-service (see RAG platform)
+Ragas (Retrieval-Augmented Generation
+Assessment), 181
+Ragie.ai, 143
+rank-aware metrics, 171-172
+raster graphics, 252
+rate limiting, 124
+Ray, 68
+RBAC (see role-based access control (RBAC))
+RDBMSs (relational database management sys‐
+tems), 50
+RDF (Resource Description Framework), 283
+ReAct framework, 192
+reasoning LLM, 193
+Reciprocal Rank Fusion (RRF), 78
+(see also hybrid search)
+record linkage (see entity linking)
+recurrent neural networks (RNNs), 44
+red teaming, 178
+redaction, 115
+entity-aware, 115
+masking, 115
+nulling, 115
+Redis, 111
+LangCache, 115
+328 
+| 
+Index
+Pub/Sub, 112
+reference-free evaluation, 173
+reinforcement learning with human feedback
+(RLHF), 11
+relation extraction, 294
+relational database management systems
+(RDBMSs), 50
+requests for information (RFIs), 18
+requests for proposals (RFPs), 18
+rerankers (see reranking)
+reranking, 5, 27, 79-83, 137
+relevance, 79
+Resource Description Framework (RDF), 283
+resource utilization, 188
+response consistency, 177
+response quality, 106-109
+REST API, 120
+retrieval failures, 158-160
+architectural limits, 160
+failure to retrieve, 158
+irrelevant retrieval, 159
+retrieval pipeline, 107
+retrieval tool, 203
+retrieval-augmented generation (RAG), 2-7
+benefits, 12-14
+scaling, 63-66
+use cases, 14-20
+Retrieval-Augmented Generation Assessment
+(Ragas), 181
+retry logic, 206
+return on investment (ROI), 271
+RFIs (see requests for information (RFIs))
+RFPs (see requests for proposals (RFPs))
+right to be forgotten, 318
+RLHF (reinforcement learning with human
+feedback), 11
+RNNs (see recurrent neural networks (RNNs))
+role-based access control (RBAC), 7, 117, 305
+ROUGE-L, 176, 276
+RRF (see Reciprocal Rank Fusion (RRF))
+S
+SaaS (see software-as-a-service (SaaS))
+Salesforce, 139
+SAP, 210
+scene change detection, 270
+schema, 284
+SDK (software development kit), 120
+secrets management, 106
+self-attention mechanism, 12
+self-hosted LLM, 143
+self-referential bias, 164
+semantic caching, 112
+semantic search, 5, 27, 228, 279
+semantic similarity, 114
+sensemaking queries, 297
+sentence segmenters (see chunking, sentenciz‐
+ers)
+server-sent events (SSE), 208
+service-level agreement (SLA), 120
+SFT (see supervised fine-tuning (SFT))
+shadow AI, 142
+shadow IT, 142
+shared embedding space, 237
+SharePoint, 121, 139
+ShieldGemma, 84, 178
+Sigmoid Loss for Language-Image Pre-training
+(SigLIP), 258
+Singer tap, 140
+single-agent system, 195
+Siri, 192
+SLA (see service-level agreement (SLA))
+Slack, 150
+small language models (SLMs), 317-318
+economic model, 317
+engine to data, 317
+production readiness, 317
+SMEs (subject matter experts), 107
+Snowflake, 129, 314
+SOC 2 (see System and Organization Controls
+type 2 (SOC 2))
+software agent, 191
+software development kit (SDK), 120
+software-as-a-service (SaaS), 46, 143
+spaCy, 40
+span, 232
+SPARQL, 282
+sparse retrieval (see keyword search)
+speaker diarization, 265
+SSE (server-sent events), 208
+staging collection, 107
+staging verification workflow, 107
+Stanza, 40
+streaming responses, 153
+Streamlit, 101
+(see also user experience (UX))
+Stripe, 195
+subject matter experts (SMEs), 107
+Index 
+| 
+329
+supernode, 305
+supervised fine-tuning (SFT), 11
+System and Organization Controls type 2 (SOC
+2), 120, 144
+T
+table extraction, 150, 239-242
+detection step, 239
+normalization, 239
+OCR and semantic interpretation, 239
+Tavily, 214
+TCO (see total cost of ownership (TCO))
+term frequency–inverse document frequency
+(TF-IDF), 27, 77
+(see also keyword search)
+Text Generation Inference (TGI), 111
+text-to-Cypher pipeline, 292
+text2SQL, 194, 314
+TF-IDF (see term frequency–inverse document
+frequency (TF-IDF))
+TGI (Text Generation Inference), 111
+throughput, 188
+time to first token (TTFT), 38, 233
+time-to-live (TTL), 112
+TLS (see Transport Layer Security (TLS))
+tool calling, 204-206
+tool confusion, 226
+tool dilution, 197
+tool use efficiency, 234
+Toolformer, 204
+total cost of ownership (TCO), 122-125, 142
+direct costs, 122
+indirect costs, 123
+trace, 232
+Transport Layer Security (TLS), 208
+triples, 283
+object, 283
+predicate, 283
+subject, 283
+TTFT (see time to first token (TTFT))
+TTL (time-to-live), 112
+turnkey RAG (see RAG platform)
+Twilio, 195
+two-stage retrieval pipeline, 75-76
+typed masking (see redaction)
+TypeScript, 101
+U
+UMBRELA score, 129, 173-175
+uptime, 188
+user experience (UX), 96-102
+control over sources, 100
+error handling, 100
+feedback mechanisms, 100
+integrated response, 98
+natural language input, 96
+process explanation, 98
+query refinement, 96
+source attribution, 98
+(see also citations)
+user satisfaction rate, 183-184
+correlational analysis, 184
+failure analysis, 184
+overall satisfaction rate, 183
+by topic/category, 183
+V
+validation gate, 229
+vanilla RAG (see retrieval-augmented genera‐
+tion (RAG))
+Vectara, 41, 145-156, 195
+admin API endpoints, 155
+Agents API, 220
+AI agents, 220-223
+API keys, 148
+Boomerang, 147
+Console, 145
+corpus, 146
+correct_hallucinations endpoint, 153
+direct data ingestion, 150
+Documents, 146
+factual consistency score, 153
+file upload, 148
+Hughes Hallucination Evaluation Model
+(HHEM), 59, 92
+Open RAG Eval, 179
+Vectara-answer, 102
+vector databases, 5, 49-55, 136
+Chroma, 253, 291
+FlatIndex search, 50
+Milvus, 52, 136
+pgvector, 46
+Pinecone, 52, 136
+Qdrant, 52, 136
+sqlite-vec, 52
+Weaviate, 52, 133
+Zilliz, 133
+vendor lock-in, 122
+330 
+| 
+Index
+vendor management, 119
+virtual assistants, 14
+virtual private cloud (VPC), 118, 143
+vision-language models (VLMs), 21, 30, 237
+visual captioning, 269
+visual citations, 273
+VLMs (see vision-language models (VLMs))
+VPC (see virtual private cloud (VPC))
+VRAM, 144
+W
+Windsurf, 201
+World Wide Web Consortium (W3C), 283
+Y
+You Only Look Once (YOLO), 274
+Z
+ZIP, 35
+Index 
+| 
+331
+About the Authors
+Ofer Mendelevitch is an AI and ML leader specializing in building production
+systems with large language models (LLMs), retrieval-augmented generation (RAG),
+and agentic workflows. He is the author of Practical Data Science with Hadoop
+(Addison-Wesley).
+Forrest Sheng Bao is a cofounder of PAIR Systems, Inc. (also known as pairsys.ai).
+Previously he was a cohead of machine learning at Vectara, where he was a major
+contributor to the HHEM 2 hallucination detector for LLMs. Prior to Vectara, he
+was an assistant professor at Iowa State University, where he won an NSF CAREER
+Award for research on LLM evaluation. Forrest holds a PhD in computer science with
+a minor in electrical engineering from Texas Tech University.
+Colophon
+The animal on the cover of Hands-On RAG for Production is a brown hyena (Para‐
+hyaena brunnea), also known as the strandwolf (meaning “beach wolf” in Afrikaans).
+It is native to southern Africa, found primarily in Namibia, Botswana, and South
+Africa. Brown hyenas are the rarest hyena species and are distinguished by their
+pointed ears and shaggy brown coats, with a lighter ruff around their necks. Adults
+can reach over 60 inches in body length and weigh almost 100 pounds, with males
+slightly larger than females.
+When threatened, brown hyenas can raise the hair on their backs, which can reach
+12 inches in length, in order to appear larger and more intimidating. They live either
+nomadically or in clans of up to 15 related individuals, although they usually forage
+alone. Brown hyenas are primarily scavengers, frequently stealing the kills of jackals,
+cheetahs, and leopards. They are also known to hunt fur seal pups along the coast,
+along with rodents and other small animals, and may supplement their diet with
+insects, eggs, and fruit. Brown hyenas have exceptionally powerful jaws, with a bite
+force of about 1,100 pounds per square inch, allowing them to crush bones.
+The brown hyena population is estimated at 4,000 to 10,000 individuals. Its conser‐
+vation status is listed as near threatened, with numbers declining as a result of
+habitat loss and conflict with humans. Many of the animals on O’Reilly covers are
+endangered; all of them are important to the world.
+The cover illustration is José Marzan Jr., based on an antique line engraving from
+Lydekker’s Royal Natural History. The cover fonts are Gilroy Semibold and Guardian
+Sans. The text font is Adobe Minion Pro; the heading font is Adobe Myriad Con‐
+densed; and the code font is Dalton Maag’s Ubuntu Mono.
+Learn from experts.
+Become one yourself.
+60,000+ titles | Live events with experts | Role-based courses 
+Interactive learning | Certification preparation | Verifiable skills
+Try the O’Reilly learning platform free for 10 days.
+©2026 O’Reilly Media, Inc. O’Reilly is a registered trademark of O’Reilly Media, Inc.  1035600_7x9.1875

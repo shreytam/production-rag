@@ -62,18 +62,18 @@ def test_worker_marks_failed_on_parse_error(tmp_path):
     assert len(deps.ingestor._store.chunks) == 0  # no partial index
 
 
-def test_worker_fails_closed_when_startup_never_ensured_collection(tmp_path):
-    """Regression guard: without the worker startup hook, the first upload
-    upserts into a collection that was never created and the document lands
-    in `failed` — exactly the P0 bug. Proves StrictInMemoryVectorStore (the
-    faithful fake) actually catches it, unlike the lenient InMemoryVectorStore
-    stub which accepts upsert() unconditionally."""
+def test_first_upload_bootstraps_collection_even_without_startup_hook(tmp_path):
+    """Defence in depth: the worker's on_startup hook normally ensures the
+    collection, but IncrementalIngestor also creates it on first upsert. So a
+    worker that skipped startup must still land the first upload in `ready`
+    (StrictInMemoryVectorStore rejects upserts into a missing collection, so
+    this only passes if the ingest-path bootstrap actually ran)."""
     deps = _deps(tmp_path, store=StrictInMemoryVectorStore())
     _seed(deps)
-    run_ingest(deps, "doc1")  # no on_startup call: collection was never ensured
+    run_ingest(deps, "doc1")  # no on_startup call
     rec = deps.registry.get("doc1", "t1")
-    assert rec.status == DocumentStatus.FAILED
-    assert rec.error
+    assert rec.status == DocumentStatus.READY, rec.error
+    assert rec.chunk_count > 0
 
 
 def test_worker_startup_ensures_collection_then_first_upload_reaches_ready(tmp_path):

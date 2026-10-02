@@ -168,7 +168,7 @@ Run: `pytest tests/test_sp4_pipeline_wire.py`
 Expected: FAIL (No HybridIndexError and missing validations in build)
 
 - [ ] **Step 3: Modify files**
-Modify `core/pipeline.py` to add validation, `HybridIndexError`, and parameter mapping supporting backward-compatible `dataset kwarg` overrides. Modify `app/api.py`, `app/demo.py`, `eval/run_eval.py`, and `eval/ragas_adapter.py` call sites to pass configuration corpus attributes.
+Modify `core/pipeline.py` to add validation and `HybridIndexError`, and rename the `build()` parameter `dataset` → `corpus` (clean rename, no backward-compat alias — this project has no external consumers of this interface, so update call sites directly instead of maintaining a legacy kwarg). Update the 4 call sites that currently pass `dataset=` as a keyword arg — `app/api.py:33`, `app/demo.py:31`, `eval/run_eval.py:76`, `eval/ragas_adapter.py:131` — to pass `corpus=` instead.
 
 - [ ] **Step 4: Run test to verify it passes**
 Run: `pytest tests/test_sp4_pipeline_wire.py`

@@ -75,6 +75,8 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -106,9 +108,12 @@ services:
   #
   #   docker compose -f infra/docker-compose.yml up -d qdrant postgres redis ingest-worker
   ingest-worker:
-    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    build:
+      context: ..
+      dockerfile: Dockerfile
     restart: unless-stopped
-    working_dir: /workspace
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -117,23 +122,13 @@ services:
       qdrant:
         condition: service_started
     environment:
-      # Keep the container's venv OFF the bind-mounted repo so the host's macOS
-      # .venv is never used inside Linux; cache it in a named volume across restarts.
-      UV_PROJECT_ENVIRONMENT: /opt/venv
-      # In-cluster service DNS. The host-published ports (localhost:*) are for
-      # processes on the host; from inside compose we address services by name.
       REDIS_URL: "redis://:dev-redis-change-me@redis:6379"
       QDRANT_URL: "http://qdrant:6333"
       PG_DSN: "postgresql://rag:rag@postgres:5432/rag"
-      # The registry MUST be shared with the API, so it cannot be the in-memory
-      # backend — pin it to postgres (the table is auto-created on first use).
       DOC_REGISTRY_BACKEND: postgres
     volumes:
-      - ../:/workspace                 # source + shared .cache (blobs/sparse/manifest)
-      - ingest_worker_venv:/opt/venv   # Linux venv, isolated from the host .venv
-      - app_shared_cache:/workspace/.cache   # same named volume as `api`, so both see the same .cache
-    command: >
-      sh -c "uv sync --extra app --frozen && exec uv run --no-sync arq ingest.worker.WorkerSettings"
+      - app_shared_cache:/app/.cache   # same named volume as `api`, so both see the same .cache
+    command: ["uv", "run", "--no-sync", "arq", "ingest.worker.WorkerSettings"]
 
   # ── Langfuse v3 stack ──────────────────────────────────────────────────────
   langfuse-worker:
@@ -205,7 +200,7 @@ services:
       LANGFUSE_INIT_PROJECT_NAME: Production RAG
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-dev
       LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-dev
-      LANGFUSE_INIT_USER_EMAIL: dev@local
+      LANGFUSE_INIT_USER_EMAIL: dev@example.com
       LANGFUSE_INIT_USER_NAME: Dev
       LANGFUSE_INIT_USER_PASSWORD: dev-password
 

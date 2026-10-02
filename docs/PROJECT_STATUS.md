@@ -16,6 +16,10 @@ It's a portfolio/foundation project, designed to be the reusable base for two la
 
 ## 2. Status at a glance
 
+> **2026-08-24 — Pivoted to PDF-only documents:** benchmark corpora
+> (arxiv/financebench/hotpotqa), dataset CLI ingest, and the Langfuse eval
+> harness/gate removed; faithfulness metric preserved in `generation/metrics.py`.
+
 | Aspect | State |
 |---|---|
 | **Architecture** | ✅ Complete — all interfaces frozen, all components implemented |

@@ -1,4 +1,10 @@
 import os
+
+# Pin test determinism BEFORE any settings import: ambient infra/.env may enable
+# Langfuse, but the offline suite exercises the no-op tracer path exclusively
+# (real env vars outrank dotenv files in pydantic-settings).
+os.environ["LANGFUSE_ENABLED"] = "false"
+
 import pytest
 from core.config import get_settings
 

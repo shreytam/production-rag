@@ -1,8 +1,7 @@
 """Offline tests for the ingest pipeline.
 
-All tests are fully offline — no network calls, no HuggingFace downloads, no
-LLM API calls. Corpus adapters are not instantiated (their load() / build_golden()
-are network-gated). Fake generators and in-memory fixtures are used throughout.
+All tests are fully offline — no network calls, no LLM API calls.
+Fake generators and in-memory fixtures are used throughout.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ import tempfile
 
 
 from core.types import Document, Chunk, ChatMessage, LLMResponse
-from ingest.base import GoldenItem, assign_tenants, tenant_split_keeping_gold
 from ingest.chunking import chunk_document
 from ingest.contextual import ContextualPrefixer
 from ingest.pii import PIIRedactor
@@ -137,84 +135,7 @@ class TestChunking:
 
 
 # ---------------------------------------------------------------------------
-# 2. assign_tenants / gold-keeping tests
-# ---------------------------------------------------------------------------
-
-class TestTenantAssignment:
-
-    def test_assign_tenants_covers_all_doc_ids(self):
-        doc_ids = [f"doc-{i}" for i in range(100)]
-        result = assign_tenants(doc_ids, seed=42)
-        assert set(result.keys()) == set(doc_ids)
-
-    def test_assign_tenants_distribution(self):
-        """With 200 docs we expect roughly 90/5/5 split."""
-        doc_ids = [f"doc-{i}" for i in range(200)]
-        result = assign_tenants(doc_ids, seed=42)
-        counts = {"public": 0, "tenant_a": 0, "tenant_b": 0}
-        for tid, _ in result.values():
-            counts[tid] += 1
-        total = sum(counts.values())
-        # At least 70% public (leniency for statistical noise)
-        assert counts["public"] / total >= 0.70
-        # tenant_a and tenant_b each present
-        assert counts["tenant_a"] >= 1
-        assert counts["tenant_b"] >= 1
-
-    def test_assign_tenants_is_deterministic(self):
-        doc_ids = [f"doc-{i}" for i in range(50)]
-        r1 = assign_tenants(doc_ids, seed=7)
-        r2 = assign_tenants(doc_ids, seed=7)
-        assert r1 == r2
-
-    def test_gold_docs_stay_in_public(self):
-        """Core guarantee: every gold doc shares its question's tenant (public)."""
-        # Create docs where some would naturally be in tenant_a/tenant_b
-        doc_ids = [f"doc-{i}" for i in range(40)]
-
-        # Mark a few as gold
-        gold_ids = ["doc-3", "doc-7", "doc-15", "doc-31"]
-        golden_items = [
-            GoldenItem(
-                question=f"Q about {did}?",
-                answer="Some answer.",
-                relevant_doc_ids=[did],
-                tenant_id="public",
-            )
-            for did in gold_ids
-        ]
-
-        assignment = tenant_split_keeping_gold(doc_ids, golden_items, seed=42)
-
-        # The guarantee: every gold doc must be in "public"
-        for item in golden_items:
-            for did in item.relevant_doc_ids:
-                assigned_tenant, _ = assignment[did]
-                assert assigned_tenant == item.tenant_id, (
-                    f"Gold doc {did!r} was assigned to {assigned_tenant!r} "
-                    f"but question.tenant_id={item.tenant_id!r}"
-                )
-
-    def test_non_gold_docs_may_be_non_public(self):
-        """Some non-gold docs should end up in minority tenants."""
-        doc_ids = [f"doc-{i}" for i in range(200)]
-        golden_items = [
-            GoldenItem(
-                question="Q?",
-                answer="A.",
-                relevant_doc_ids=["doc-0"],
-                tenant_id="public",
-            )
-        ]
-        assignment = tenant_split_keeping_gold(doc_ids, golden_items, seed=42)
-        non_public = [
-            did for did, (tid, _) in assignment.items() if tid != "public"
-        ]
-        assert len(non_public) >= 1, "Expected some non-gold docs in minority tenants"
-
-
-# ---------------------------------------------------------------------------
-# 3. PII tests
+# 2. PII tests
 # ---------------------------------------------------------------------------
 
 class TestPII:

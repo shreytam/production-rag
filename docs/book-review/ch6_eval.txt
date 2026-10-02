@@ -1,0 +1,1336 @@
+deploying applications that produce hallucinations or inaccurate answers, ultimately
+eroding user trust in your application and degrading its benefits to your business.
+In production, these technical failures manifest as lower customer satisfaction (which
+might be indicated by lower customer satisfaction scores), lower net promoter scores
+(NPSs), or even a rise in (often costly) compliance incidents.
+As you learned in Chapter 1 (see “The Blueprint of a RAG Stack” on page 4 and Fig‐
+ure 1-2), the RAG query flow is composed of at least two distinct but interdependent
+components: a retriever and a generator. A failure or degradation in any one of the
+components in your query flow can result in poor-quality outputs.
+A robust evaluation strategy must therefore be capable of diagnosing issues in all
+query flow components independently while also assessing their synergistic perfor‐
+mance. By linking these technical components to evaluation metrics for retrieval
+and generation as well as system metrics (which we will discuss in “System Metrics:
+Latency and Uptime” on page 187), you can ensure that your RAG stack is optimized
+for measurable business outcomes.
+Retrieval Failures
+One of the most critical and common types of failure in RAG occurs during retrieval,
+and when your retrieval process is flawed, the entire system is compromised. No
+matter how advanced the generator LLM is, it cannot produce a correct, relevant
+answer from incorrect or irrelevant context.
+In production, we recommend optimizing your retriever before
+the generative LLM. Improving your retrieval metrics by switching
+from a basic vector search to a hybrid search (vector search +
+BM25) or adding a reranker (see Chapter 3) can provide measur‐
+able gains. If your retrieval recall is 40%, no amount of prompt
+engineering will make your RAG application successful.
+There are two common failure modes in retrieval:
+Failure to retrieve (low recall)
+This type of failure happens when your dataset contains the exact information
+needed to answer a user’s query, but the retrieval mechanism completely fails to
+surface it.
+This effectively blinds the LLM, and can manifest in two primary ways:
+• A complete failure, where the retriever finds no relevant information at all,
+•
+leaving the LLM with no information to ground its response on.
+• A partial failure, where the system retrieves some relevant chunks but misses
+•
+other critical pieces required for a comprehensive and accurate answer.
+158 
+| 
+Chapter 6: Evaluating Your RAG Application
+In these scenarios, the LLM is forced into a corner: it either admits it cannot find
+the information (which is often unhelpful) or—more dangerously—it falls back
+on its pre-trained knowledge to hallucinate a plausible-sounding but fabricated
+or outdated response.
+Irrelevant retrieval (low precision)
+In this scenario, the retriever is “noisy”—it successfully finds document chunks,
+but some or all of them are not relevant to the user query and do not contain the
+specific facts required to answer the query.
+For example, if the user asks, “What security protocols are required for a new
+GitHub repository?”, the retriever might pull chunks with general information
+about GitHub features. While related to “GitHub,” these retrieved chunks are
+useless for answering the specific question about security protocols.
+As an example, consider the query “What is the mandatory final approval step for a
+project launch, and what is the specific deadline for submitting the risk assessment
+form?” In our example, the system has these three chunks available:
+• Chunk A (relevant): “All projects must complete a ‘Stakeholder Sign-off’ as the
+•
+final mandatory step before the Go-Live date.”
+• Chunk B (relevant): “Risk assessment forms must be submitted to the Compli‐
+•
+ance Portal no later than 72 hours before the scheduled launch.”
+• Chunk C (irrelevant/noisy): “Project managers are encouraged to use the ‘Team
+•
+Celebration’ budget to host a lunch after a successful launch event.”
+Now imagine that our retriever successfully identifies Chunk A as relevant, but it fails
+to retrieve Chunk B. Instead, it pulls in Chunk C simply because it contains the words
+“Project” and ”launch,” which creates “noise” in the context provided to the LLM.
+The LLM is now forced to generate an answer using only the “Stakeholder Sign-off”
+info and the “Team Celebration” info. The resulting response might look something
+like this:
+The mandatory final step for a Project Launch is the Stakeholder Sign-off. Regarding
+the deadline for the risk assessment, the documentation does not specify a timeframe;
+however, please ensure you plan for a team celebration lunch after your launch is
+complete.
+Since the retriever missed Chunk B, the LLM couldn’t provide the 72-hour deadline.
+Even though it admitted it didn’t know the deadline (which is better than a halluci‐
+nation, but still a failure of the system), it included a “noisy” distraction about a
+celebration lunch that the user didn’t ask for. The user might assume there is no
+deadline since the system couldn’t find one, leading to a missed compliance window
+and a delayed project launch.
+How Does RAG Fail? 
+| 
+159
+Ultimately, robust retrieval relies on simultaneous optimization of both precision and
+recall. By leveraging metrics like recall@k, precision@k, nDCG, or UMBRELA (see
+“Retrieval Metrics” on page 169), you can identify and fix issues in your retrieval
+pipeline, empowering the generative LLM to have the right facts to rely upon.
+While many retrieval failures can be addressed by tuning the pipeline itself, some
+failures are rooted in the architectural limits of the retrieval method itself. Standard
+RAG often struggles with complex, multi-hop queries like “What is the HQ location
+of the company that acquired Startup X?”, or broad “sensemaking” queries like “What
+does the engineering team think about the new policy?” These queries require more
+than simple semantic matching, and to solve these, we must look toward agentic RAG
+(Chapter 7) or knowledge graphs (Chapter 9).
+Generation Failures
+Even when retrieval works perfectly (or at least reasonably well)—delivering the best
+chunks needed to answer a query—your application can still yield poor results due
+to failures in the generation step. An effective RAG system requires not just a good
+librarian in its retriever, but a competent and trustworthy author in its generator.
+There are a few important types of generation failures to be aware of: faithfulness
+failures, context utilization failures, and answer relevance failures.
+Faithfulness failure
+Most commonly known as a hallucination, this is arguably the most severe type of
+generation error, and occurs when the LLM’s answer directly contradicts or is not
+supported by the facts presented in the provided chunks.
+For example, if one of the chunks explicitly states, “The project deadline is July
+31st,” and the LLM confidently answers, “The project deadline is in early August,” it
+has failed its primary directive to generate a response grounded in the information
+provided to it.
+For any enterprise user relying on the RAG system for factual accuracy, this can
+be the most destructive kind of error, as it completely shatters the application’s
+credibility.
+It is helpful to distinguish between faithful incorrectness (did the LLM ground its
+response only in the provided chunks, and the provided information was wrong?)
+and unfaithful incorrectness (is the final answer not reflected in the source data?). A
+response can be perfectly faithful to an outdated document—for example, accurately
+stating a 2023 deadline found in a stale PDF document—yet still be incorrect for the
+user in 2024. Distinguishing these two is vital for troubleshooting: if the response is
+unfaithful, then the LLM may be at fault, whereas if it’s faithful but incorrect, then the
+160 
+| 
+Chapter 6: Evaluating Your RAG Application
+retriever has fetched outdated chunks, and you may need to fix your data ingestion
+pipeline or implement document versioning.
+Context utilization failure
+This type of generation error occurs when the retriever has successfully identified and
+provided multiple relevant chunks of information, but the LLM fails to incorporate
+all of them into its final answer. This might occur due to LLM challenges like order‐
+ing bias (i.e., focusing only on the first or last chunk), where the model effectively
+ignores crucial pieces of the provided context.
+For example, the user might ask, “What are the financial risks and benefits of Project
+Atlas?” The retriever correctly supplies two chunks: one detailing the project’s high
+potential for revenue (benefits) and another from a risk-assessment document outlin‐
+ing significant market volatility (risks). A context utilization failure would occur if
+the LLM generates an answer that only describes the revenue benefits of the project,
+while completely ignoring the provided context about the risks.
+The resulting answer isn’t a hallucination, as it’s grounded in some of the context, but
+it is dangerously incomplete and misleading, presenting a skewed picture that could
+lead to poor decision making.
+AutoNuggetizer, discussed later in “Generation Metrics” on page 175, is one approach
+to identifying gaps in context utilization as part of evaluating RAG generation quality.
+Answer relevance failure
+In this scenario, the LLM’s answer may be entirely faithful to the provided context
+and include all the relevant facts, but ultimately fails to address the user’s core
+question or intent.
+For instance, if a user asks, “Is it safe to push the new update?” and the context
+lists the update’s features, an answer relevance failure would be an answer like “The
+new update contains features A, B, and C.” While factually correct according to the
+context, this response places the burden of inference back on the user, who must now
+interpret those features to decide if the update is safe. The system fails to deliver the
+conclusive insight that was requested, thereby failing in its role as a helpful assistant.
+We discuss answer similarity metrics like ROUGE-L and BERT‐
+Score in “Generation Metrics” on page 175, comparing a generated
+answer to a “ground truth” answer; however, these metrics tend to
+miss this kind of failure, and are thus not effective in this case. A
+custom rubric with LLM-as-a-judge (see “Using LLMs for Evalua‐
+tion: LLM-as-a-Judge” on page 164) often performs better.
+How Does RAG Fail? 
+| 
+161
+Since LLMs are not perfect, the generation step in your RAG can fail in multiple
+ways, leading to a response that is not consistent with the facts, does not represent all
+the facts, or simply does not answer the user’s question in a satisfactory manner.
+One of the reasons for the nonrelevance of the answer might be that no relevant data
+exists in your dataset, which can often be due to issues with data ingestion.
+Failures Due to Inadequate Data Ingestion
+The principle of “garbage in, garbage out” is acutely relevant to RAG. The quality of
+the system’s output is fundamentally limited by the quality of the data ingested from
+the source.
+If the ingestion pipeline—the process responsible for parsing, cleaning, and indexing
+your source documents—is flawed, the data you want your RAG to be grounded on
+is essentially compromised. No matter how accurate your retriever or how precise
+your generator, they cannot compensate for a source of truth that is incomplete,
+improperly structured, obsolete, or simply wrong.
+Two common challenges in data ingestion are structural parsing errors and content
+staleness.
+Structural parsing error
+The ingestion process fails to correctly interpret complex document formats, or prop‐
+erly extract relevant information from tables, charts, or images inside PDF, DOCX, or
+PPTX documents. The text might be extracted, but its tabular or hierarchical context
+is lost, turning structured data into a meaningless sequence of words.
+This often manifests as systematically low retrieval relevance, specifically on table-
+heavy or highly visual documents. When you implement robust logging in your
+ingestion pipeline, failures of this kind can be identified and fixed proactively.
+Content staleness
+Even if your data ingestion pipeline regularly refreshes your data to ensure it’s up to
+date, you might still observe a situation where outdated or superseded documents are
+not properly removed or versioned. Your RAG application might then “confidently”
+retrieve information from a year-old policy document, presenting it as current fact
+and leading users to act on dangerously obsolete information.
+The most straightforward way to address content staleness is via a unique entity
+ID for each document, along with versioning. All documents and their chunks can
+be marked with this entity ID, and a version number; when a new version of that
+document is ingested, all chunks from the previous versions are removed.
+162 
+| 
+Chapter 6: Evaluating Your RAG Application
+With this in place, you can also run proactive tests for stale data. If two versions
+of the same document (entity ID) are present in your RAG system, then you know
+something is wrong with the ingestion process.
+Summary of RAG Failures
+Ultimately, inadequate ingestion indirectly triggers the retrieval and generation
+failures discussed earlier. These ingestion-related issues are particularly insidious
+because they create a false sense of reliability; the system may appear to be function‐
+ing perfectly, yet it is operating on a flawed foundation.
+Table 6-1 summarizes all the failure modes we discussed.
+Table 6-1. Failure modes in RAG
+Pipeline
+stage
+Failure mode
+Description
+Mitigation strategy
+Retrieval
+Failure to retrieve
+(low recall)
+Information exists but isn’t surfaced; leads
+to “blind” LLMs.
+Use hybrid search (vector + BM25) or
+implement a reranker to surface better
+chunks.
+Irrelevant retrieval
+(low precision)
+The retriever is “noisy,” pulling chunks that
+don’t contain the answer.
+Use hybrid search (vector + BM25) or
+implement a reranker to surface better
+chunks.
+Architectural limits
+Struggles with multi-hop or broad
+“sensemaking” queries.
+Transition to agentic RAG or integrate
+knowledge graphs.
+Generation
+Hallucination
+LLM contradicts or includes information
+that’s not factually consistent with the
+context.
+Use a hallucination detection
+mechanism.
+Context utilization
+failure
+LLM ignores some chunks, leading to
+incomplete answers.
+Optimize prompt engineering to ensure
+all chunks are weighted.
+Answer relevance
+failure
+Answer is “safe” and faithful but doesn’t
+answer the core question.
+Implement a custom LLM-as-a-judge
+rubric.
+Ingestion
+Structural parsing
+error
+Tables/charts are not properly extracted
+and their information content is lost.
+Implement robust logging in the
+pipeline; use specialized parsers for PDF,
+DOCX, and PPTX files.
+Content staleness
+Outdated docs are retrieved as “current”
+because they weren’t purged.
+Use unique entity IDs and versioning.
+Now that you’ve gained insight into RAG failure modes, we’ll look at metrics that
+help us identify the failures. But before we dive into the metrics, we have to first
+understand a common and critical technique that’s used in many metrics for RAG
+evaluation: LLM-as-a-judge.
+How Does RAG Fail? 
+| 
+163
+Using LLMs for Evaluation: LLM-as-a-Judge
+As LLMs became more powerful and versatile, the idea of using LLMs for evaluation
+emerged, and the common name for this approach is “LLM-as-a-judge”: taking
+advantage of an LLM to simulate an “impartial adjudicator” for a given metric.
+What Is LLM-as-a-Judge?
+In the LLM-as-a-judge approach, the LLM is given the user query, the generated
+response from your RAG application, and a set of explicit evaluation criteria (e.g.,
+“Assess this summary for accuracy, conciseness, and coherence on a scale of 1 to 10”).
+The judge then provides a numerical score, a categorical rating, or a detailed textual
+critique justifying its assessment, depending on the exact LLM prompt provided to it.
+The main benefit of using an LLM-as-a-judge is its flexibility. Unlike traditional met‐
+rics, you can provide the LLM with a custom, detailed rubric using a natural language
+prompt. You can instruct it to score the RAG system’s output on virtually any criteria
+you define, such as conciseness, adherence to a specific persona, causal reasoning,
+or creativity. For example, an LLM judge can be told to “act as a skeptical expert
+and verify if the answer is fully supported by the provided context and contains no
+extrapolated information.” It can then execute this complex, multifaceted instruction,
+and provide feedback as requested.
+Overall, LLM-as-a-judge has emerged as a formidable tool in the evaluation land‐
+scape. Research shows—for example, see research by Lianmin Zheng et al. and Krisz‐
+tian Balog et al. that, under optimal configurations, judgments from top-tier models
+correlate remarkably well with human preferences. However, this effectiveness isn’t
+a “plug-and-play” guarantee; it is a delicate balance of model selection and prompt
+design.
+The nuances of performance
+The alignment between an LLM judge and human intuition is often high, but it
+remains highly task-dependent. An LLM might provide expert-level evaluation for
+creative summaries yet falter when faced with the rigid logic of complex mathemati‐
+cal reasoning.
+To bridge this gap, the method of evaluation matters as much as the model itself.
+While rating a single response (pointwise) is common, asking a judge to compare two
+responses (pairwise) typically yields higher stability and better alignment with human
+standards.
+Inherent biases
+Despite its flexibility, the LLM judge is prone to subtle, often invisible, biases. The
+most prominent is self-referential bias, where the model favors specific styles or tones
+164 
+| 
+Chapter 6: Evaluating Your RAG Application
+over raw accuracy. Addressing this is difficult, often requiring the manual creation of
+a “ground truth” for comparison as part of the LLM-as-a-judge prompt.
+Even more concerning is overestimation bias: the LLM judges may exhibit a “pro-AI”
+lean, potentially over-estimating the performance of input from LLM-based systems
+while undervaluing classical, deterministic inputs.
+Operational hurdles: Cost and latency
+Beyond the quality of the output, there are the cold realities of cost and latency. API
+calls to frontier models can be slow and expensive, making LLM-as-a-judge-based
+metrics more expensive and time-consuming than traditional ML metrics.
+While the trajectory of AI development suggests that costs will fall and speeds will
+rise, these factors currently make LLM-as-a-judge impractical for massive, iterative
+testing cycles, where the additional cost and latency are too extreme.
+The challenge of stochastic stability
+Perhaps the most persistent hurdle is instability. Because LLMs are stochastic by
+nature, a judge can literally “change its mind,” providing different scores for the iden‐
+tical input across different runs. This nondeterminism makes it difficult to reliably
+track incremental improvements in a RAG system.
+While developers can attempt to force determinism by setting temperatures to zero or
+fixing random seeds, these are not foolproof. Practical workarounds often involve the
+following:
+• Running the judge multiple times and averaging the results
+•
+• Transitioning from subjective scoring to structured pairwise comparisons to
+•
+anchor the model’s logic
+Self-Referential Bias with LLM-as-a-Judge
+When using an LLM-as-a-judge, be wary of the self-referential bias—a phenomenon
+where the LLM judge favors outputs that mimic its own training data, stylistic quirks,
+or verbosity. Because many LLMs share common fine-tuning datasets, a judge may
+assign a higher score to an answer simply because it “sounds like an AI,” regardless of
+its factual accuracy. This might create a dangerous feedback loop:
+Style over substance
+Models often prefer polite, well-structured, but ultimately incorrect “AI-speak”
+over blunt, accurate, deterministic outputs.
+Using LLMs for Evaluation: LLM-as-a-Judge 
+| 
+165
+The verbosity trap
+Judges tend to equate length with quality, rewarding “fluff” and penalizing con‐
+cise, correct answers.
+Systemic blind spots
+If the judge model has a specific logical blind spot, it will likely fail to penalize
+that same error in the model it is evaluating.
+To mitigate this, you may need to calibrate your LLM judge against a human-verified
+“golden test set” to ensure you are measuring performance, not just self-reflection.
+How LLM-as-a-Judge Works
+To demonstrate how LLM-as-a-judge works, let’s look at this example code, also avail‐
+able in a GitHub notebook, which creates an LLM judge to score for factuality and
+answer relevance. This example is similar to the Retrieval-Augmented Generation
+Assessment (Ragas) approach:
+import os
+import json
+import re
+from openai import OpenAI
+client = OpenAI()
+def evaluate_with_llm_judge(query, context, generated_answer, model="gpt-4o"):
+    """
+    Uses an LLM to evaluate the quality of a RAG-generated answer.
+    Args:
+        query (str): The user's original query.
+        context (str): The context retrieved by the RAG system.
+        generated_answer (str): The answer generated by the RAG system.
+        model (str): The OpenAI model to use as the judge.
+    Returns:
+        dict: A dictionary containing the judge's scores and reasoning.
+              Returns None if the API call fails.
+    """
+    if not client:
+        return {
+            "error": "OpenAI client not initialized."
+        }
+        
+    prompt = f"""
+    You are an impartial judge evaluating the quality of an answer generated by
+    a Retrieval-Augmented Generation (RAG) system.
+    Your task is to evaluate the generated answer based on two criteria:
+    1.  **Factuality**: Is the generated answer factually grounded in the 
+166 
+| 
+Chapter 6: Evaluating Your RAG Application
+        provided context? A faithful answer only uses information present in the 
+        context and does not contradict it.
+    2.  **Answer Relevance**: Is the generated answer relevant and helpful for 
+        the given query?
+    You must provide a score from 1 to 5 for each criterion (1=Poor, 
+    5=Excellent) and a brief explanation for your scores.
+    **Query:**
+    {query}
+    **Retrieved Context:**
+    {context}
+    **Generated Answer:**
+    {generated_answer}
+    Please provide your evaluation *only* in a valid JSON format with the 
+    following keys: "factuality_score", "factuality_reasoning", 
+    "relevance_score", "relevance_reasoning". Your response MUST be a single 
+    JSON object and nothing else.
+    """
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": """You are an expert evaluator of 
+                AI-generated text that responds only in valid JSON."""},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0,
+        )
+        
+        response_text = response.choices[0].message.content
+        
+        # Clean up the response to extract only the JSON part.
+        # This handles cases where the model might wrap the JSON in 
+        ```json ... ```
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            evaluation = json.loads(json_str)
+            return evaluation
+        else:
+            print("""Error: Could not find a valid JSON object in the model's
+            response.""")
+            print(f"Full response: {response_text}")
+            return None
+    except Exception as e:
+Using LLMs for Evaluation: LLM-as-a-Judge 
+| 
+167
+        print(f"An error occurred during API call or JSON parsing: {e}")
+        return None
+As you can see, this function defines a prompt that specifies to the LLM exactly what
+it wants it to do (in this case, rate the input data and explain its rating).
+Here’s what you get when you run this:
+evaluation_data = {
+        "query": "What is the boiling point of water?",
+        "context": """At standard atmospheric pressure, water (H₂O) boils at 
+        100° Celsius (212° Fahrenheit).""",
+        "generated_answer": "Water boils at 100 degrees."
+    }
+evaluation_result = evaluate_with_llm_judge(
+            item['query'],
+            item['context'],
+            item['generated_answer']
+        )
+print(f"Query: {item['query']}")
+print(f"Generated Answer: {item['generated_answer']}")
+print(f"Factuality Score: {evaluation_result.get('factuality_score')}")
+print(f"Factuality Reasoning: {evaluation_result.get('factuality_reasoning')}")
+print(f"Relevance Score: {evaluation_result.get('relevance_score')}")
+print(f"Relevance Reasoning: {evaluation_result.get('relevance_reasoning')}")
+And the result is
+Query: What is the boiling point of water?
+Generated Answer: Water boils at 100 degrees.
+Factuality Score: 4
+Factuality Reasoning: The generated answer is mostly factually correct as it 
+states that water boils at 100 degrees, which aligns with the context. However, 
+it lacks the specification of the unit (Celsius) and the condition of standard 
+atmospheric pressure.
+Relevance Score: 4
+Relevance Reasoning: The answer is relevant to the query as it directly 
+addresses the boiling point of water. However, it could be more helpful by 
+specifying the unit of measurement and the condition under which this boiling 
+point is accurate.
+Now that we understand how LLM-as-a-judge works, and some of its limitations, we
+are ready to dive into the actual RAG evaluation metrics.
+RAG Evaluation Metrics
+Metrics for RAG evaluation fall into two main categories: retrieval and generation. In
+your production RAG system, retrieval metrics tell you how well your vector search,
+hybrid search, or reranking works, whereas generation metrics provide insight into
+the effectiveness of the final generative LLM.
+168 
+| 
+Chapter 6: Evaluating Your RAG Application
+As we will see, some metrics are computed using traditional mathematical tech‐
+niques, and are thus easy to run in production using traditional MLOps techniques,
+while others use LLM-as-a-judge, and therefore require additional considerations
+that we highlight in “Integrating RAG Evaluation in Production” on page 184.
+The GitHub repo includes examples of various metrics included in this section.
+Retrieval Metrics
+Evaluating retrieval is the most critical step in diagnosing any RAG application. It
+all comes down to one question: “Is your retrieval pipeline accurately identifying
+and fetching the most relevant chunks from your source dataset to answer the user’s
+query?”
+To calculate traditional information retrieval (IR) metrics, such as precision, recall,
+and F1-score, or rank-aware metrics like mean reciprocal rank (MRR), mean average
+precision (MAP), and normalized discounted cumulative gain (nDCG), you need to
+specify “golden chunks” (a human-curated, ranked list of relevant chunks). Generat‐
+ing and maintaining these golden chunks for each query—especially in a dynamic
+production environment—is notoriously difficult, and often infeasible; as the source
+data evolves, the ground truth quickly becomes obsolete.
+Nevertheless, in our review of retrieval metrics, we’ll start explaining these founda‐
+tional retrieval metrics, since they are useful at a smaller scale, before exploring more
+scalable techniques like UMBRELA.
+Basic retrieval metrics: Precision, recall, and F1-score
+Precision, recall, and F1-score are three search evaluation metrics that form the
+foundation of retrieval evaluation. We’ll start by defining precision and recall:
+Precision@k
+This metric answers the question: “Of the top k chunks my retriever identified as
+most relevant, how many were actually relevant?” It measures the signal-to-noise
+ratio of the retrieved context, indicating how much irrelevant information is
+being passed to the generator:
+precision@k = |{relevant cℎunks in top‐k}|
+k
+High precision is particularly crucial when dealing with LLMs that have limited
+context windows, as it ensures that this valuable space is filled with relevant
+chunks.
+RAG Evaluation Metrics 
+| 
+169
+Recall@k
+This metric answers a different question, namely “Of all the chunks in my entire
+dataset that are relevant to the query, how many did my retriever find in the top k
+results?”
+precision@k = |{relevant cℎunks in top‐k}|
+k
+This metric measures the completeness or coverage of the retrieval process,
+indicating how much relevant information might be missed.
+As you can see, both of these metrics rely on the number of relevant chunks in top-K,
+which requires the golden chunks for the query that we have mentioned earlier.
+Which one is most important—precision or recall? The reality is that precision and
+recall simply evaluate the quality of a retrieval system from different perspectives:
+precision focuses on the quality of what was found, while recall focuses on the
+quantity of relevant items found, compared to what “should have been found.”
+There is a natural tension between precision and recall. A system can easily achieve
+high recall by simply returning a vast number of chunks, but this would likely cause
+its precision to drop significantly due to the inclusion of many irrelevant results.
+Conversely, a system could achieve high precision by returning only a few chunks it is
+extremely confident about, but this would hurt its recall because it might miss many
+other relevant chunks. This is known as the precision–recall trade-off.
+The F1-score@k is designed to address this tension by providing a single, balanced
+score:
+F1‐score@k = 2precision@k × recall@k
+precision@k × recall@k
+This score is simply the harmonic mean of precision@k and recall@k. It is useful
+when both retrieving relevant chunks (recall) and avoiding irrelevant ones (precision)
+are equally important.
+Rank-aware metrics: Mean reciprocal rank, mean average precision,
+and normalized discounted cumulative gain
+While precision, recall, and F1-score are fundamental retrieval metrics, they have
+a notable limitation: they treat all positions within the top k results as equal. In
+practice, a relevant chunk at rank 1 might be far more valuable to a RAG application
+170 
+| 
+Chapter 6: Evaluating Your RAG Application
+1 As a reminder, “lost in the middle” refers to the phenomenon where an LLM’s performance significantly
+drops when the most relevant information is located in the center of a long input prompt, as models tend
+to prioritize data at the very beginning or the very end. We note, however, that even with the real impact of
+“lost in the middle,” rank-aware metrics are much less impactful for the generative LLM in RAG than they are
+to humans reviewing a list of ranked results. In other words, humans reading the ranked results tend to be
+more impacted (e.g., with some kind of “reading fatigue“) when trying to understand, whereas LLMs are more
+robust and can easily ignore an irrelevant result.
+than one at rank 10, especially for long prompts where the “lost in the middle” effect
+may be at play.1
+Rank-aware metrics address this by assigning greater weight to relevant chunks that
+appear higher in the retrieved list.
+Mean reciprocal rank (MRR).    MRR is the simplest rank-aware metric. It focuses exclu‐
+sively on the rank of the first relevant chunk found.
+For each query, we compute the “reciprocal rank in position i”:
+rri =
+1
+ranki
+where ranki is the position of the first correct item for that query. If no relevant item
+is found, the score is 0.
+The MRR for a set of N queries is the average of these reciprocal ranks across all
+queries in an evaluation set:
+MRR = 1
+N ∑
+i = 1
+N
+rri
+It is highly interpretable and ideal for tasks where finding a single good answer
+quickly is the primary goal.
+Mean average precision (MAP) .    MAP provides a more comprehensive single-figure
+summary of ranking quality. For a single query, average precision (AP) is calculated
+by averaging the precision scores at each position:
+APK = 1
+N ∑
+k = 1
+N
+Precision(k) · rel(k)
+where rel(k) is 1 if the item at position k is relevant and 0 otherwise.
+MAP is then computed as the mean of these AP scores across a dataset of U queries.
+RAG Evaluation Metrics 
+| 
+171
+MAP = 1
+U ∑
+i = 1
+U
+APi
+MAP considers both precision and recall because it averages precision specifically
+at the points where relevant items are found; therefore, it heavily penalizes retrieval
+pipelines that place relevant items lower in the ranking. This makes it a robust
+measure of overall retrieval quality when multiple relevant chunks exist.
+Normalized discounted cumulative gain (nDCG).    nDCG is the most sophisticated and
+flexible of the rank-aware metrics. Like MAP, it considers the position of relevant
+chunks, but its key advantage is the ability to handle graded relevance. This means
+chunks can be assigned relevance scores on a scale (e.g., 0 = irrelevant, 1 = relevant, 2
+= highly relevant, 3 = perfectly relevant), which is not possible with MAP or MRR.
+The calculation involves a few steps. First let’s define DCG (discounted cumulative
+gain) at position K:
+DCG@K = ∑
+i = 1
+k
+2reli −1
+log2(i + 1)}
+where reli is the relevance score scale (e.g., 0–3).
+Now let’s assume we have a reference “ideal ranking” called iDCG; then, we define
+nDCG as follows:
+nDCG@K = DCG@k
+iDCG@K
+In other words, nDCG is the ratio of the actual DCG to the ideal DCG at position K.
+Rank-aware metrics like MRR, MAP, and nDCG were developed to incorporate rank
+sensitivity in retrieval metrics. MRR is the simplest of these, focusing solely on the
+position of the first relevant result, making it ideal for tasks where finding one good
+answer quickly is the goal. MAP offers a more robust evaluation by averaging the pre‐
+cision at each position in which a relevant document appears, effectively rewarding
+systems that not only find multiple relevant items but also rank them highly.
+Finally, nDCG is the most powerful metric, as it not only rewards higher ranks but
+can also incorporate varying degrees of relevance (e.g., “perfectly relevant” versus
+“somewhat relevant”), making it the gold standard for evaluating complex retrieval
+flows. However, for small-scale applications where you only include the top three or
+five chunks from your retrieval pipeline, nDCG is often an over-kill, and simpler
+metrics like MRR or MAP are generally sufficient.
+172 
+| 
+Chapter 6: Evaluating Your RAG Application
+UMBRELA scores
+A significant practical challenge with all the metrics we discussed so far, like preci‐
+sion, recall, MRR, or MAP, is the difficulty in curating the “relevant chunks” (also
+known as golden chunks) for each query included in the evaluation.
+Creating golden chunks is a manual, time-consuming task, and often practically
+infeasible in large, dynamic, or production-scale RAG applications. This has moti‐
+vated the development of reference-free retrieval evaluation methods, such as
+UMBRELA, as implemented, for example, in Open RAG Eval. Instead of comparing
+retrieved chunks against a static golden set, UMBRELA employs an LLM-as-a-judge
+approach, wherein the judge assesses each retrieved chunk for its relevance to
+answering the query.
+Using a specialized prompt, an LLM judge assesses a given chunk and assigns a score
+based on the following criteria:
+• 0 = Irrelevant, meaning the chunk is unrelated to the query
+•
+• 1 = Related, where the chunk touches upon the topic but does not contain a real
+•
+answer
+• 2 = Highly relevant, indicating the chunk contains some answer, though it might
+•
+be unclear or buried in extraneous text
+• 3 = Perfectly relevant, where the chunk is dedicated to answering the query
+•
+precisely
+A critical aspect of the success of UMBRELA lies in the fact that, as shown in the
+UMBRELA paper referenced above, these LLM-generated scores correlate highly
+with those produced by human assessors, validating it as a robust approach for
+retrieval evaluation.
+Bear in mind that the raw UMBRELA score (0–3) for a chunk serves as a powerful,
+direct indicator of its relevance, but it can also be used as input to rank-aware metrics
+like precision or nDCG. It is challenging, however, to use UMBRELA to compute
+recall since you would need to compute UMBRELA for every single chunk in your
+dataset, which can become practically infeasible for large datasets.
+Adopting UMBRELA-style approaches means you effectively trade human labeling
+effort for increased compute cost and inference latency. This makes UMBRELA
+best suited for production environments where chunks are too dynamic or large for
+human experts to keep annotating, but where the budget allows for the necessary
+LLM API calls.
+Let’s take a look at how to compute UMBRELA scores. The precise prompt used for
+UMBRELA is as follows; see the example notebook:
+RAG Evaluation Metrics 
+| 
+173
+UMBRELA_PROMPT = """
+Given a query and a passage, you must provide a score on an integer scale of 0 
+to 3 with the following meanings:
+    0 = represents that the passage has nothing to do with the query,
+    1 = represents that the passage seems related to the query but does not 
+    answer it,
+    2 = represents that the passage has some answer for the query, but the
+    answer may be a bit unclear, or hidden amongst extraneous information and
+    3 = represents that the passage is dedicated to the query and contains 
+    the exact answer.
+    
+Important Instructions: 
+Assign category 1 if the passage is somewhat related to the topic but not 
+completely, category 2 if the passage presents something very important related 
+to the entire topic but also has some extra information, and category 3 if the 
+passage only and entirely refers to the topic. 
+If none of the above satisfies, give it category 0.
+Query: {query}
+Passage: {chunk}
+Split this problem into steps:
+Consider the underlying intent of the search.
+Measure how well the content matches a likely intent of the query (M).
+Measure how trustworthy the passage is (T).
+Consider the aspects above and the relative importance of each, and decide on a 
+final score (O). The final score must be an integer value only.
+Do not provide any code in the result. Provide each score in the format of a 
+single integer without any reasoning.
+"""
+As an example, imagine we have the following query and retrieved chunks:
+query = "How does photosynthesis work in plants?"
+chunks = [
+    "Photosynthesis is the process used by plants, algae, and certain bacteria 
+    to convert light energy into chemical energy, through a process that 
+    converts carbon dioxide and water into glucose and oxygen.",
+    "Chlorophyll, the pigment that gives plants their green color, is crucial 
+    for absorbing sunlight in organelles called chloroplasts.",
+    "Mitochondria are known as the powerhouses of the cell, responsible for 
+    generating most of the cell's supply of adenosine triphosphate (ATP)."
+]
+When we compute the UMBRELA scores, we get
+- Score 3 for chunk: 'Photosynthesis is the process used by plants, algae, and 
+certain bacteria to convert light energy into chemical energy, through a process
+that converts carbon dioxide and water into glucose and oxygen....'
+- Score 2 for chunk: 'Chlorophyll, the pigment that gives plants their green 
+color, is crucial for absorbing sunlight in organelles called chloroplasts....'
+- Score 0 for chunk: 'Mitochondria are known as the powerhouses of the cell, 
+responsible for generating most of the cell's supply of adenosine triphosphate 
+(ATP)....'
+174 
+| 
+Chapter 6: Evaluating Your RAG Application
+This fits what we expect. The first chunk provides an exact answer to the user query,
+thus getting a UMBRELA score of 3. The second chunk has information related to the
+query, and thus gets a score of 2, whereas the third chunk 3 has nothing to do with
+photosynthesis, so scores 0.
+The UMBRELA approach enables a shift from human-annotated ground truth to
+dynamic, AI-driven judgment, and makes retrieval evaluation scalable, automated,
+and adaptable to virtually any query and document collection. We will see a similar
+approach next in “Generation Metrics” with AutoNuggetizer (more on AutoNugge‐
+tizer will follow in the next section).
+Generation Metrics
+A high-quality retriever provides the necessary ingredients for a good answer, but it
+does not guarantee one. The generator LLM must effectively synthesize the retrieved
+context into a response that is factually consistent, directly addresses the user’s query,
+and is ultimately correct and helpful.
+The core question is, therefore, “Is the generative LLM using the provided chunks
+effectively and appropriately to generate a high-quality response to the user’s query?”
+While it is essential that an answer addresses the user’s query and be factually sound,
+a comprehensive evaluation must also scrutinize how that answer was constructed.
+This involves a deeper look at the relationship between the generated response and
+the retrieved chunks it was given, as well as the intrinsic qualities of the text itself.
+There are a few key metrics to use when evaluating generation.
+Context utilization
+Context utilization measures how effectively and comprehensively the generator uses
+the information available in the retrieved context. A high score in context utilization
+indicates an efficient and thorough generator that synthesizes its response using all
+necessary facts without being distracted by extraneous details.
+When the LLM response includes inline citations, context utilization can be partially
+observed by simply observing which context items (as evident in those citations) were
+used to formulate specific parts of a response in RAG. A more rigorous approach
+is the AutoNuggetizer metric (see “Open RAG Eval” on page 179), which works as
+follows:
+1. Nugget Generation and Classification: the system generates “nuggets,” which are
+1.
+atomic facts or pieces of information relevant to a given query. This is done by
+analyzing the query alongside relevant chunks. After generating these nuggets,
+the system classifies them by importance:
+RAG Evaluation Metrics 
+| 
+175
+a. “Vital” nuggets are facts that are considered essential for a comprehensive and
+a.
+correct answer. A good response must contain these nuggets.
+b. “OK” nuggets are relevant and good to have for added detail, but they are not
+b.
+strictly necessary for an answer to be considered correct.
+2. Once the classified nuggets are established, the second stage involves evaluating
+2.
+the actual answers produced by a language model. For each generated answer,
+AutoNuggetizer determines how well it covers the nuggets:
+a. Supported: The answer fully and accurately contains the fact presented in the
+a.
+nugget.
+b. Partially supported: The answer contains some of the information from the
+b.
+nugget, but it might be incomplete or not fully accurate.
+c. Not supported: The answer does not contain the information from the nugget
+c.
+at all.
+3. Finally, these support judgments are scored and aggregated to produce an overall
+3.
+evaluation of the model’s response.
+Answer accuracy
+There are typically two main metrics considered as part of answer accuracy: answer
+similarity and answer relevancy.
+Answer similarity compares the ground truth answer to the generated answer (using
+measures like BERTScore or ROUGE-L, two recognized approaches for computing
+semantic similarity between two strings), while answer relevancy assesses how perti‐
+nent the generated answer is to the original question, penalizing answers that are
+incomplete or contain redundant information.
+Importantly, both answer similarity and answer relevancy require a “golden answer”
+to work, whereas context utilization (via AutoNuggetizer) and faithfulness do not.
+Faithfulness
+Faithfulness (or factual consistency) measures how grounded the generated response
+is in the provided chunks, and is a key metric to assess RAG hallucinations, where the
+generator fabricates information not present in the retrieved chunks. A response is
+considered faithful (or factually consistent) if every statement it makes can be directly
+verified from the retrieved chunks, and hallucinated if the model extrapolated in its
+response beyond the provided information in the retrieved chunks.
+Factual consistency can be measured in a simple call to a hallucination detection
+model like HHEM, or alternatively using LLM-as-a-judge.
+176 
+| 
+Chapter 6: Evaluating Your RAG Application
+Citation accuracy
+Many RAG systems provide inline citations in the response, and your application
+may be one of them. Citation accuracy measures whether your citations are reliable
+and correctly reflect the part of the response they are embedded in.
+The most common form of this is citation precision, which measures whether the
+sources cited for a specific statement actually support that statement. When a model
+generates a sentence and appends a citation, a user should be able to follow that link
+and easily find the substantiating evidence. A high precision rate means the system
+is correctly attributing its generated statements to the correct source documents (or
+chunks within those documents), preventing misattribution and making verification
+seamless.
+In your production RAG evaluation, you always want to have most, if not all, of these
+metrics available so that you can understand whether chunks provided to the LLM
+are efficiently used to generate accurate, helpful, and reliable answers to your end
+users.
+Response consistency
+Response consistency measures exactly what the name suggests: if you run the same
+query multiple times through your RAG query flow, do you get the same answer or
+different answers?
+Why would the answer from your RAG pipeline be different every time you run the
+same query? One of the main reasons is that LLMs are nondeterministic (even when
+you set the temperature to 0), and can return different answers even with the same
+prompt and same “top k chunks” from your retrieval pipeline.
+Systematically measuring response consistency is a fundamental requirement for any
+production-grade RAG application, providing insight into the predictability of the
+response. While minor variations in wording are acceptable due to the probabilistic
+nature of language models, the factual substance of the response should remain
+stable.
+In regulated industries such as finance, healthcare, or legal services, consistency is
+necessary since these fields demand high levels of trust, auditability, and compliance.
+If a RAG system provides different financial advice or medical information for the
+same query, it becomes an unreliable and potentially noncompliant tool.
+Bias and Safety
+You can extend RAG evaluation to provide a critical safety checkpoint by integrating
+safety guardrails directly into the assessment process. This involves actively screening
+both the retrieved data chunks and the final generated answer for specific undesirable
+traits, as well as bias or discrimination in the response.
+RAG Evaluation Metrics 
+| 
+177
+A common approach is to include specialized safety models (such as ShieldGemma
+or Llama Guard) that flag safety or bias in a given response.
+Llama Guard is primarily designed as a text-based safety classifier to monitor and fil‐
+ter content in LLM-powered conversations. Its role is to scan both user prompts and
+model outputs for safety policy violations before those messages are processed or dis‐
+played. Llama Guard can identify and flag unsafe categories such as hate speech, sex‐
+ual content (which can involve minors), self-harm encouragement, terrorism-related
+content, and explicit incitements to violence.
+ShieldGemma is designed as a multimodal safety model, capable of moderating both
+text and images according to customizable safety policies. In text mode, it is similar
+to Llama Guard, but its multimodality allows it to also be used in RAG applications
+whose output is mixed images and text.
+Ultimately, these types of models allow you to tune the retrieval and generation
+steps to either exclude problematic source data or refuse to generate an inappropriate
+response, ensuring the model behaves responsibly in real-world applications.
+As we’ve seen, there are a lot of metrics you can use for RAG evaluation, both in
+retrieval and generation. Some require golden answers, while others do not. Factual
+consistency is arguably the most critical dimension of generator evaluation, since the
+primary promise of RAG is to ground LLM responses in verifiable facts, reducing the
+risk of hallucination.
+In addition to utilizing automated safety models as part of evaluation, red teaming
+provides a crucial, human-in-the-loop approach for stress-testing a RAG system for
+hidden biases.
+This process involves dedicated teams or individuals who act as adversaries, inten‐
+tionally crafting prompts and scenarios designed to provoke biased or unfair respon‐
+ses. Red teaming probes for vulnerabilities in unconventional ways, using nuanced
+language, cultural contexts, or complex ethical dilemmas that try to uncover what
+automated metrics might miss when evaluating retrieval and generation—for exam‐
+ple, is your system over-relying on a set of documents (and thus chunks) that reflect a
+single perspective, or generating language that subtly reinforces harmful stereotypes?
+The insights gained from red teaming are invaluable for iterative improvement.
+When a red team successfully elicits a biased response, it can be used to create
+more robust safety filters, modify the LLM’s prompt to avoid specific types of biased
+language, or even guide adjustments to the underlying data ingested into your RAG
+application, to ensure it is more diverse and representative.
+In the next section, we look at some existing RAG evaluation offerings to see what
+metrics each of them provides.
+178 
+| 
+Chapter 6: Evaluating Your RAG Application
+RAG Evaluation Offerings
+You can certainly build your own RAG evaluation system, but doing so might require
+significant effort. Fortunately, the ecosystem of evaluation tools is maturing rapidly,
+and you can choose from a range of powerful open source frameworks as well as
+commercial tools.
+The choice between them often comes down to a trade-off between flexibility and
+control (open source) versus ease of use and managed infrastructure (commercial).
+In this section, we’ll explore some of the most prominent offerings in each category to
+help you decide which approach is right for your project.
+Open RAG Eval
+Open RAG Eval is a recent addition to the RAG evaluation landscape, with its claim
+to fame being the introduction of reference-free metrics that do not require golden
+chunks or golden answers.
+Developed by Vectara in collaboration with researchers from the University of Water‐
+loo, Open RAG Eval is designed to overcome the immense difficulty and cost of
+creating and maintaining ground-truth datasets for large-scale, real-world enterprise
+RAG applications.
+To achieve its reference-free goal, the framework integrates novel, research-backed
+metrics, most of which we discussed in “RAG Evaluation Metrics” on page 168:
+UMBRELA
+A reference-free metric that uses an LLM-as-a-judge to assess overall retrieval
+performance by scoring context relevance on a 0–3 scale.
+AutoNuggetizer
+An automated fact-checking method that decomposes retrieved chunks into
+factual “nuggets” and then evaluates whether these essential nuggets are reflected
+in the generated response. This provides a granular measure of groundedness
+and context utilization.
+Hallucination score
+Leverages Vectara’s HHEM model to quantify information in the generated
+answer that is not supported by the retrieved context.
+Citation metric
+Quantifies whether citations included in the response are actually supported by
+the source documents and chunks they reference.
+RAG Evaluation Offerings 
+| 
+179
+Consistency metric
+Quantifies consistency for any of the other four metrics. By running your RAG
+system N times, you can measure the mean and standard deviation of the results
+of any metric and measure its consistency.
+To evaluate your RAG system with Open RAG Eval, you first create a list of queries
+(and, importantly, just the queries, no golden answers required).
+Open RAG Eval provides a flexible connector architecture, allowing you to easily
+create a connector to your RAG application if it’s not already supported, or use one
+of the existing connectors to Vectara, LangChain, or LlamaIndex. You can also collect
+the data manually from your RAG system in a JSON file and feed that directly to
+Open RAG Eval.
+To run the evaluation, you create a YAML configuration file that defines the location
+of the queries file, the connector to use, and the types of evaluation metrics you want
+to include.
+Once the evaluation is finished, you can review the resulting JSON files to deeply
+explore the results, or use Open Evaluation, as shown in Figure 6-1.
+Figure 6-1. Example user interface from Open Evaluation—an app to visualize Open
+RAG Eval outputs, to better understand issues with RAG retrieval, generation, ground‐
+edness, or citations
+The main benefit of Open RAG Eval lies in its novel approach to reference-free RAG
+evaluation, along with a concise and completely open source implementation that
+provides full transparency and extendability.
+180 
+| 
+Chapter 6: Evaluating Your RAG Application
+Retrieval-Augmented Generation Assessment
+Ragas, which stands for Retrieval-Augmented Generation Assessment, is another
+open source RAG evaluation framework. Ragas primarily uses the LLM-as-a-judge
+approach, and includes a large set of metrics, both for RAG and more recently for
+agentic workflows.
+The typical workflow for using Ragas involves creating an evaluation dataset, often
+structured as a Hugging Face dataset. This dataset must contain columns for the
+question, the generated answer, and the retrieved contexts, and a ground_truth column
+with correct answers can be included.
+Once the dataset is prepared, it’s passed to the ragas.evaluate() function, which
+manages the necessary LLM calls to compute and return the scores for the specified
+metrics.
+One of the main strengths of Ragas is its integration with popular libraries like
+LangChain and LlamaIndex. A particularly powerful feature is its ability to syntheti‐
+cally generate a test set from a collection of documents, which helps kickstart the
+evaluation process when a pre-existing test set is not available. However, synthetic
+datasets must be used with care as they may not accurately represent your user
+queries or the specific documents you want to evaluate.
+Despite its advantages, the inner workings or Ragas and its metrics can be somewhat
+difficult to understand, which can make it challenging to diagnose the specific cause
+of a low score. Furthermore, it does not provide any reference-free metrics, resulting
+in demanding requirements for the manual generation of golden datasets.
+DeepEval
+DeepEval is an open source evaluation framework with the core philosophy of treat‐
+ing LLM evaluation like unit testing.
+The typical workflow in DeepEval is fundamentally code-centric and designed to feel
+familiar to developers who use testing frameworks like pytest. Instead of evaluating
+an entire dataset at once, a developer defines individual LLMTestCase objects. These
+test cases are then assessed within a test function using deepeval.assert_test(),
+which checks if the output meets predefined metric thresholds.
+With this approach, you can write explicit tests for specific behaviors and edge cases,
+mirroring how unit tests are written for conventional code.
+One of the main strengths of DeepEval is its tight integration with the pytest frame‐
+work, making it exceptionally well-suited for automated regression testing within a
+CI/CD pipeline.
+RAG Evaluation Offerings 
+| 
+181
+Similar to Ragas, DeepEval offers a comprehensive suite of over 14 metrics, including
+faithfulness, answer relevancy, contextual recall, and others.
+DeepEval also offers the G-Eval metric, which allows for custom, criteria-based evalu‐
+ations. The main advantage of G-Eval is its flexibility; you are no longer limited to a
+fixed set of metrics. If you need to evaluate something highly subjective or specific to
+your domain, G-Eval allows you to create a custom, reliable metric for it.
+Amazon Bedrock
+Amazon Bedrock offers RAG evaluation as a fully managed service, designed to
+provide a scalable, end-to-end solution directly within the AWS ecosystem.
+The workflow is centered around creating an “evaluation job,” where users select a
+powerful foundation model, such as Anthropic’s Claude, to act as an LLM-as-a-judge.
+This job can be configured to assess either the retrieval component in isolation or the
+full retrieve-and-generate pipeline.
+Similar to Ragas and DeepEval, for the retrieval stage, with AWS Bedrock’s frame‐
+work, you can assess context relevance and context recall to ensure that the right
+information is being found.
+For the generation stage, it measures quality through metrics like faithfulness (to
+detect hallucinations), and correctness (when a ground-truth answer is available).
+An important capability of Bedrock is its built-in support for responsible AI evalua‐
+tion. It automatically scores responses on dimensions like harmfulness, stereotyping,
+and answer refusal. This dual focus on both quality and safety provides a more
+holistic view of the RAG application’s real-world performance.
+The primary strength of Bedrock is that it offers the convenience and scalability
+of a managed service, eliminating the need for teams to build and maintain their
+own evaluation infrastructure. Its deep integration with other AWS services, like
+Guardrails, creates a cohesive development and governance experience.
+However, as a commercial platform, it comes with operational costs tied to the use
+of the judge models, and it offers less transparency into the underlying evaluation
+prompts compared to open source frameworks.
+In summary, there are quite a few open source and commercial offerings for automa‐
+ted RAG evaluation, each with their strengths and weaknesses. One thing that is often
+overlooked is actual user (human) feedback; we will discuss this next.
+182 
+| 
+Chapter 6: Evaluating Your RAG Application
+Human Feedback
+Despite the remarkable advances in automated evaluation of RAG, human judgment
+remains a valuable input, since automated metrics might struggle with subtlety,
+complex user intent, and alignment with nuanced human values.
+One of the most obvious approaches is to integrate thumbs-up/thumbs-down buttons
+in your RAG application and collect those responses from your own end users to
+understand their satisfaction from the responses.
+Instead of relying solely on proxy (or automated) metrics, you use the user’s explicit
+feedback to calculate a user satisfaction score or acceptance rate. This becomes your
+primary key performance indicator.
+The basic formula is simply as follows:
+User Satisfaction Rate =
+Number of tℎumbs up
+number of tℎumbs up + number of tℎumbs down
+To use this approach, first set up your RAG application to log every interaction and
+capture the feedback associated with it. For example, you can log events with the
+following fields:
+• A unique ID for the interaction
+•
+• The user’s prompt
+•
+• The retrieved context (the documents or text chunks)
+•
+• The final generated answer
+•
+• The user feedback (e.g., thumbs up, thumbs down)
+•
+• Timestamp and other metadata (e.g., user ID, session ID)
+•
+Once you are collecting this data, you can calculate several powerful metrics:
+Overall satisfaction rate
+The high-level KPI mentioned above. This gives you a bird’s-eye view of perfor‐
+mance.
+Satisfaction rate by topic/category
+This is more insightful. You can categorize prompts (e.g., using keyword match‐
+ing, embeddings, or a simple classifier) to see which topics your RAG system
+handles well versus poorly.
+For example, you might discover your product feature questions have a 95%
+satisfaction rate, but billing questions have only a 60% rate, indicating a problem
+with the documents in your billing knowledge base.
+Human Feedback 
+| 
+183
+Correlational analysis
+Compare your user satisfaction scores against your automated RAG evaluation
+metrics like faithfulness or answer relevance.
+For example, do low faithfulness scores strongly correlate with thumbs-down
+ratings? If so, your automated metric is a good proxy for user satisfaction. If not,
+your automated metric may be misleading.
+Failure analysis
+Analyze interactions that received the largest amount of thumbs-down feedback,
+to identify the worst-performing outputs, identify the root cause (e.g., bad
+retrieval, hallucination, poor formatting), and prioritize fixes.
+Treating thumbs-up/down feedback as a direct source for evaluation is a best practice
+for production RAG systems. The key is to instrument your RAG application to
+capture the feedback and then build a process by which you regularly review the most
+problematic queries or topics, analyze the reasons for bad responses, and remediate
+the issues.
+Now that you’ve learned about the automated metrics you can use in RAG evaluation,
+using human feedback, and the various existing offerings in the space, you are well
+equipped to deploy a RAG evaluation of your choosing. However, when deployed in
+real production environments, it’s important to understand the full RAG evaluation
+lifecycle, which we discuss next.
+Integrating RAG Evaluation in Production
+Whatever metrics you use, a mature RAG evaluation framework must enable two
+fundamental tasks, measurement and tuning:
+Measurement
+Measurement is the systematic monitoring of your RAG application’s quality.
+This is a baseline requirement before launch and must be performed regularly
+post-launch. Any time you upgrade a component, add data, or change a con‐
+figuration, you must measure its impact on response quality. Without proper
+measurement in place, you are blind to performance degradations and cannot
+know which lever to pull once you identify a problem.
+Tuning
+Tuning is the process of using RAG evaluation to actively improve performance.
+A RAG stack has many complex, configurable components (e.g., chunking strat‐
+egy, embedding model, retrieval algorithm, LLM choice, prompt engineering).
+The ability to run experiments, systematically alter these configurations, and
+use your evaluation framework to identify which combination yields the highest
+quality is the key to building a state-of-the-art RAG application.
+184 
+| 
+Chapter 6: Evaluating Your RAG Application
+Integrating a RAG evaluation framework into your pipeline transforms it from a
+“black box” into a tunable system. Depending on where your application is in its
+lifecycle, you will utilize measurement and tuning through two distinct cycles: offline
+and online.
+Offline evaluation is your primary engine for tuning. You systematically measure
+the impact of different configurations—such as tweaking your chunking strategy
+or swapping embedding models—against a fixed golden dataset. By analyzing these
+measurements, you can tune each component in your RAG pipeline, or add compo‐
+nents as needed to achieve better performance.
+Once live, online evaluation kicks in and acts as your early-warning system, monitoring
+how the tuned model performs against the unpredictability of real-world user intent.
+Using LLM-as-a-Judge in Production
+Since LLM-as-a-judge is important for many RAG evaluation metrics, it’s important
+to treat your LLM judge with the same operational rigor as the application itself.
+Because LLM-as-a-judge is effectively a secondary model call, it introduces a “tax” on
+your development cycle in the form of increased cost and latency.
+If you implement LLM-as-a-judge in online evaluation, it is rare to evaluate every
+single user interaction in real time. Instead, you can implement batching strategies or
+run evaluations on a representative sample of traffic.
+Beyond cost, observability and auditability are also important for the LLM judge
+itself. Because an LLM judge can be inconsistent or biased, you must log every input
+(the query, context, and answer) alongside the judge’s full reasoning and final score
+and output. This metadata allows you to audit the judge’s performance over time; if
+a stakeholder questions why the system’s quality score dropped, you need the textual
+justification provided by the judge to determine if the RAG system actually degraded
+or if the judge simply had an “off day.” Treating your judge’s output as critical system
+telemetry ensures that your evaluation framework remains a reliable source of truth.
+Finally, remember that LLM judges are code, and should be versioned accordingly. As
+your product evolves, your LLM judge prompts may need to change to be more strict
+or focus on new criteria. Without strict versioning of your prompts and the specific
+model version used for judging, you risk “evaluation drift,” where your scores change
+not because your RAG system changed, but because your yardstick moved.
+Offline RAG Evaluation
+Any mature RAG evaluation framework must be deeply integrated into the MLOps
+lifecycle, particularly within CI/CD pipelines. Before a new component—such as an
+updated embedding model, a new reranker, or a refined prompt—is deployed to
+production (or upgraded), it must pass through an “evaluation gate.” This gate keeps
+Integrating RAG Evaluation in Production 
+| 
+185
+quality in check, requiring any change to be tested against a benchmark dataset to
+ensure it meets a minimum level of quality.
+For most production systems, this means enforcing a “no-regression” policy on
+critical metrics: for instance, requiring that faithfulness and retrieval relevance scores
+remain above a certain threshold or improve relative to the previous release, while
+ensuring that P95 latency does not increase by more than 5%.
+Maintaining this evaluation gate requires a living benchmark that evolves alongside
+the application. As the product’s scope grows or new data is added, you need to
+update this benchmark set to reflect these changes, often by promoting difficult or
+failed real-world user queries into the test suite. This ensures the evaluation gate
+remains a representative hurdle.
+It is therefore recommended to version these benchmark datasets alongside your
+code, so that you can maintain a transparent audit trail, and prevent performance
+drift over time.
+Online RAG Evaluation
+So far, we have not provided significant detail about online evaluation, as the chapter
+is mostly focused on offline evaluation, but now we do want to share a few thoughts
+and ideas in that direction.
+As mentioned earlier in this chapter, online evaluation—namely, performing evalua‐
+tion on live system traffic—can help identify issues with your RAG system based on
+real user queries, and thus nicely augments the offline evaluation strategy. However,
+as you might expect, it presents several challenges:
+Absence of golden datasets
+A primary obstacle is the absence of a golden dataset: unlike offline evaluation,
+with curated question–answer pairs, real-world user queries are unpredictable
+and diverse. Therefore, crafting the golden answers for each query is often
+infeasible due to the dynamic nature of enterprise data—making it difficult to
+define an absolute ground truth for every interaction.
+Cost and latency
+Running a sophisticated LLM-as-a-judge (using frontier models like Gemini 3 or
+GPT-5) on every single query can double your operational costs and introduce
+significant latency.
+To make online evaluation feasible without breaking your budget or slowing down
+your RAG application, we recommend moving away from “blocking” evaluations:
+instead of making the user wait for a judge to approve an answer, implement an
+asynchronous evaluation pipeline. In this architecture, the RAG system delivers the
+response immediately, but a background worker logs the query, context, and answer
+186 
+| 
+Chapter 6: Evaluating Your RAG Application
+to be evaluated “out-of-band.” This allows you to run reference-free checks—like
+UMBRELA or AutoNuggetizer—without adding a single millisecond to the user’s
+perceived latency.
+To keep costs in check, you don’t need to evaluate 100% of your traffic, and can
+instead use intelligent sampling of just 5–10% of interactions, which is usually
+enough to provide a statistically significant view of your system’s health.
+For advanced online evaluation, you can always try A/B testing, the gold standard for
+continuous improvement. By routing a small portion of your users to a “challenger”
+pipeline (e.g., one with a new reranking model or a refined prompt) and compar‐
+ing its performance against your “champion” (current) pipeline, you get a direct
+answer to this question: Does this change actually help the user? By combining these
+automated asynchronous scores with real-time human feedback (like the thumbs-up/
+down signals discussed in “Human Feedback” on page 183), you create a powerful
+“evaluation flywheel” that catches regressions in the wild and promotes high-value
+failure cases back into your offline golden dataset for further tuning.
+System Metrics: Latency and Uptime
+So far, we’ve focused primarily on measuring the quality of retrieved chunks and
+generated responses. Beyond that, you might incorporate standard DevOps and
+operational metrics into your RAG quality dashboard.
+These metrics are vital because they directly impact the user experience, scalability,
+and economic viability of your RAG application. A system that provides perfect
+answers but is slow, frequently unavailable, or prohibitively expensive will ultimately
+fail. Therefore, metrics like latency, throughput, uptime, and cost should be treated as
+first-class citizens in the evaluation framework, ensuring that the system is not only
+accurate but also robust, efficient, and reliable in a production environment.
+As with most mission-critical enterprise systems in production, there are three key
+dimensions to consider: latency and throughput, reliability and uptime, and cost and
+resource efficiency.
+Latency and Throughput
+Latency measures the time it takes for the RAG system to process a user’s query and
+return a final, generated response. Monitoring average latency as well as tail latencies
+(e.g., P95 or P99) helps identify bottlenecks and ensures a consistently responsive
+user experience.
+For more precise troubleshooting, you can decompose the end-to-end latency into
+per-component metrics, tracking the performance of the retriever, reranker, and
+System Metrics: Latency and Uptime 
+| 
+187
+LLM individually. By monitoring values at each stage, you can pinpoint specific
+bottlenecks and perform targeted optimizations at the component level.
+Closely related to latency is throughput, typically measured in queries per second
+(QPS), which indicates how many requests the system can handle simultaneously.
+This metric is essential for capacity planning and understanding how the system will
+perform under load.
+Reliability and Uptime
+Uptime is the percentage of time your RAG application is operational and accessible
+to users. A high uptime, often targeted at 99.9% or higher, is fundamental for build‐
+ing user trust and ensuring the service is dependable.
+Complementing uptime is the error rate, which tracks the frequency of failed requests,
+such as HTTP 5xx server errors or timeouts. A sudden spike in the error rate can
+signal underlying problems with the LLM API, vector database, reranker, hallucination
+detection model, or other infrastructure components. Consistently monitoring these
+reliability metrics is crucial for maintaining a healthy and stable service.
+Cost and Resource Efficiency
+Cost is a critical operational metric for any RAG system, especially those operating
+at scale. This involves monitoring the expenses associated with each component,
+including the vector database, the retrieval model, the reranker, hybrid search, and
+the LLM provider’s API calls (often priced per token).
+Beyond production expenses, RAG evaluation itself introduces a secondary cost layer,
+as metrics that utilize LLM-as-a-judge consume additional tokens, and thus introduce
+additional cost. To maintain control of expenses, evaluation should not be a blanket
+process; rather, you can implement an evaluation budget alongside your production
+budget. This involves strategic choices like using reference-free metrics or running
+expensive evaluations on sampled traffic rather than the entire query stream.
+Alongside direct costs, it’s important to track resource utilization metrics like CPU,
+GPU, and memory usage. Optimizing these resources directly translates to lower
+operational costs and ensures the long-term financial sustainability of the application.
+These system considerations are critical for success. You may have the best retrieval
+pipeline creating your relevant chunks, and the best LLM generating the response, yet
+if users suffer continuous outages of the application, then they will just stop using it.
+Conclusion
+Evaluating a RAG application is not just a technical task; it’s a fundamental require‐
+ment for building trustworthy, high-performing, and production-ready AI systems.
+188 
+| 
+Chapter 6: Evaluating Your RAG Application
+As you’ve seen throughout this chapter, ensuring quality responses in RAG spans the
+entire pipeline. It begins with proper ingestion of the right documents, continues with
+having a state-of-the-art retrieval pipeline to ensure you retrieve the right chunks,
+and concludes with making sure your generative LLM works properly to generate a
+response that is grounded in the chunks retrieved and provides a useful response to
+the end user.
+Failures in a RAG pipeline can emerge from flawed retrieval, hallucinated or incom‐
+plete generation, or even from ingesting outdated or improperly parsed documents.
+The only way to systematically identify and fix these issues, on initial production
+deployment and on a continuous basis afterwards, is through a well-designed RAG
+evaluation framework.
+This chapter introduced you to the full spectrum of RAG evaluation:
+• For retrieval, you explored both traditional metrics like precision@k, recall@k,
+•
+and F1-score, along with rank-aware metrics, such as MRR, MAP, and nDCG,
+which account for relevance ordering.
+• For generation, you learned how to measure faithfulness to the context, context
+•
+utilization, answer accuracy, citation precision, and response consistency.
+• We introduced state-of-the-art, reference-free approaches such as UMBRELA
+•
+and AutoNuggetizer, which make scalable evaluation possible without the need
+for hand-labeled datasets (aka golden answers).
+• We discussed production-grade concerns, including latency, uptime, cost moni‐
+•
+toring, and how to evaluate a RAG system under real-world conditions.
+• You saw the role of human feedback, like simple thumbs-up/down, as a powerful
+•
+evaluation signal that captures user satisfaction directly.
+• Finally, we examined the importance of safety, bias evaluation, red teaming, and
+•
+the growing suite of evaluation platforms, including Open RAG Eval, Ragas,
+DeepEval, and AWS Bedrock.
+Together, these tools and techniques allow you to not only measure performance, but
+actively improve it. That dual purpose, measurement and tuning, is what transforms
+RAG evaluation from a passive best-effort scoring task into a strategic business lever.
+RAG evaluation is not one-size-fits-all. Some use cases will prioritize high recall; oth‐
+ers, faithfulness and latency. The key takeaway is to align your choice of metrics with
+your goals, use a layered approach that combines automated metrics with real-world
+human feedback, and make evaluation an integral, continuous part of your system
+lifecycle.
+In the next chapter, we move beyond single-query RAG systems into agentic RAG,
+where retrieval becomes part of a broader goal-driven reasoning loop.
+Conclusion 
+| 
+189
+CHAPTER 7
+From RAG to AI Agents
+The definition of a software agent first emerged from the fields of distributed AI and
+computer science in the 1970s and 1980s. A foundational concept was Carl Hewitt’s
+Actor Model, first proposed in 1973, which defined self-contained, interactive com‐
+ponents (“Actors”) that communicate through asynchronous message passing.
+While not explicitly called “agents” at first, Actors embodied the core principles of
+autonomy and concurrent operation. By the 1980s, researchers used the term “agent”
+to describe a software entity with specific characteristics: it was autonomous (in
+control of its own actions), had “social” abilities (could interact with other agents),
+was reactive (responded to its environment), and was proactive (took initiative to
+meet its goals). These early agents emerged from the field of symbolic AI, operat‐
+ing on “hand-coded” rules and logical inference within highly structured, limited
+environments.
+The 1990s became the “age of intelligent agents,” where these concepts were formal‐
+ized and put into practice. A key development was the Belief-Desire-Intention (BDI)
+model, an architecture that gave agents a more human-like reasoning structure. An
+agent would maintain beliefs about the state of the world, have desires (goals to
+achieve), and form intentions (committed plans of action). This era saw the rise of
+early practical agents, such as information agents that could filter emails or search
+nascent databases, and the first multi-agent systems (MASs), where multiple agents
+collaborated to solve complex problems in logistics, manufacturing, or telecommuni‐
+cations. See Figure 7-1 for a timeline.
+191
