@@ -34,3 +34,27 @@ def test_tracer_mask_callback():
     assert cleaned["nested"]["phone"] == "Call [PHONE]"
     assert cleaned["list"][0] == "another [EMAIL]"
     assert cleaned["list"][1] == 123
+
+
+def test_mask_handles_tuples_and_pydantic_models():
+    from pydantic import BaseModel
+
+    class M(BaseModel):
+        note: str
+
+    tracer = Tracer(Settings())
+    out = tracer._mask_data(("mail a@corp.com", M(note="call 555-123-4567")))
+    assert out == ("mail [EMAIL]", {"note": "call [PHONE]"})
+
+
+def test_init_failure_logs_warning_without_secrets(monkeypatch, caplog):
+    import sys
+    import logging
+
+    monkeypatch.setitem(sys.modules, "langfuse", None)  # import raises ImportError
+    with caplog.at_level(logging.WARNING, logger="observability.langfuse_tracing"):
+        tracer = Tracer(Settings(langfuse_enabled=True, langfuse_public_key="pk-SECRETPUB", langfuse_secret_key="sk-SECRETKEY"))
+    assert tracer._enabled is False
+    text = caplog.text
+    assert "failed to initialise" in text
+    assert "SECRET" not in text

@@ -25,7 +25,7 @@ def test_ingest_redact_policy_contextual(tmp_path):
     
     # Document with raw PII
     docs = [
-        Document(doc_id="doc1", text="Author bob@corp.com wrote: the credit card number is 4111-2222-3333-4444.", tenant_id="t1")
+        Document(doc_id="doc1", text="Author bob@corp.com wrote: the credit card number is 4111-1111-1111-1111.", tenant_id="t1")
     ]
     
     # We will test contextual prefixer running on redacted docs

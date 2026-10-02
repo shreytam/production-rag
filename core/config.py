@@ -243,6 +243,11 @@ class Settings(BaseSettings):
                 raise ValueError("jwt_issuer and jwt_audience are required when app_env=prod")
             if self.auth_dev_signer_enabled:
                 raise ValueError("auth_dev_signer_enabled must be False when app_env=prod")
+            if self.pii_detector != "presidio":
+                raise ValueError(
+                    "pii_detector must be 'presidio' when app_env=prod "
+                    "(the regex detector is a dev-grade heuristic)"
+                )
         return self
 
     @model_validator(mode="after")

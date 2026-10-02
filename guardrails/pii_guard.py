@@ -5,8 +5,13 @@ Delegates detection to :func:`ingest.pii.redact` and maintains an audit log.
 
 from __future__ import annotations
 
+from collections import deque
+
 from ingest.pii import PIIRedactor
 from core.types import GuardrailAction, GuardrailResult
+
+
+AUDIT_LOG_MAXLEN = 1000
 
 
 class PIIGuardrail:
@@ -17,15 +22,18 @@ class PIIGuardrail:
     compliance purposes.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_maxlen: int = AUDIT_LOG_MAXLEN) -> None:
         self._redactor = PIIRedactor()
+        # Bound the in-memory log: the redactor's default list grows for the
+        # whole process lifetime. Durable audit goes through PIIAuditLog.
+        self._redactor.audit_log = deque(maxlen=audit_maxlen)
 
     @property
     def name(self) -> str:
         return "pii_guard"
 
     @property
-    def audit_log(self) -> list[dict]:
+    def audit_log(self) -> deque[dict]:
         return self._redactor.audit_log
 
     def check(self, text: str, *, context: dict | None = None) -> GuardrailResult:

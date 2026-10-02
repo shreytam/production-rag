@@ -671,3 +671,12 @@ def test_output_block_suppresses_content_and_metadata():
 
 
 
+
+
+def test_pii_guard_audit_log_is_bounded():
+    from guardrails.pii_guard import PIIGuardrail
+
+    guard = PIIGuardrail(audit_maxlen=5)
+    for i in range(20):
+        guard.check(f"mail user{i}@example.com")
+    assert len(guard.audit_log) == 5

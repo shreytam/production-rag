@@ -93,3 +93,35 @@ def test_presidio_detector_detects_person_when_model_installed():
     for s in spans:
         assert isinstance(s, PIISpan)
         assert s.start < s.end
+
+
+# --- Regex detector gap regressions ---------------------------------------------
+
+def _found(text):
+    d = RegexPIIDetector()
+    return [(s.type, text[s.start:s.end]) for s in d.detect(text)]
+
+
+@pytest.mark.parametrize("text,ptype,seg", [
+    ("My SSN is 123456789.", "SSN", "123456789"),
+    ("social security number: 123456789", "SSN", "123456789"),
+    ("Call +44 20 7946 0958 today", "PHONE", "+44 20 7946 0958"),
+    ("card 378282246310005 on file", "CREDIT_CARD", "378282246310005"),
+    ("card 3782 822463 10005", "CREDIT_CARD", "3782 822463 10005"),
+    ("card 4111 1111 1111 1111", "CREDIT_CARD", "4111 1111 1111 1111"),
+    ("mail jo@exämple.com now", "EMAIL", "jo@exämple.com"),
+])
+def test_regex_detector_gap_positives(text, ptype, seg):
+    assert (ptype, seg) in _found(text)
+
+
+@pytest.mark.parametrize("text,ptype", [
+    ("Order id 123456789 shipped", "SSN"),            # bare 9 digits, no context
+    ("card 4111 1111 1111 1112", "CREDIT_CARD"),      # fails Luhn
+    ("tracking 4012345678901234", "CREDIT_CARD"),     # fails Luhn
+    ("card 378282246310006", "CREDIT_CARD"),          # Amex, fails Luhn
+    ("ref +1234", "PHONE"),                           # too few digits
+    ("version 2.0.1 at 12:30", "PHONE"),
+])
+def test_regex_detector_gap_negatives(text, ptype):
+    assert ptype not in {t for t, _ in _found(text)}

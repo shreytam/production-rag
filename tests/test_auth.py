@@ -29,24 +29,24 @@ def test_auth_defaults_are_dev_friendly():
 
 def test_prod_requires_hs256_secret():
     with pytest.raises(ValidationError):
-        Settings(app_env="prod", jwt_alg="HS256", jwt_secret="",
+        Settings(app_env="prod", pii_detector="presidio", jwt_alg="HS256", jwt_secret="",
                  jwt_issuer="iss", jwt_audience="aud")
 
 
 def test_prod_requires_issuer_and_audience():
     with pytest.raises(ValidationError):
-        Settings(app_env="prod", jwt_alg="HS256", jwt_secret="s",
+        Settings(app_env="prod", pii_detector="presidio", jwt_alg="HS256", jwt_secret="s",
                  jwt_issuer="", jwt_audience="")
 
 
 def test_prod_forbids_dev_signer():
     with pytest.raises(ValidationError):
-        Settings(app_env="prod", jwt_alg="HS256", jwt_secret="s",
+        Settings(app_env="prod", pii_detector="presidio", jwt_alg="HS256", jwt_secret="s",
                  jwt_issuer="iss", jwt_audience="aud", auth_dev_signer_enabled=True)
 
 
 def test_prod_valid_config_constructs():
-    s = Settings(app_env="prod", jwt_alg="RS256", jwks_url="https://idp/jwks",
+    s = Settings(app_env="prod", pii_detector="presidio", jwt_alg="RS256", jwks_url="https://idp/jwks",
                  jwt_issuer="iss", jwt_audience="aud")
     assert s.app_env == "prod"
 
@@ -321,3 +321,9 @@ def test_cli_build_token_requires_dev_signer():
     s = Settings(auth_dev_signer_enabled=False, jwt_secret="")
     with pytest.raises(RuntimeError):
         build_token(s, tenant="acme", tags=[], ttl=60)
+
+
+def test_prod_requires_presidio_pii_detector():
+    with pytest.raises(ValidationError, match="presidio"):
+        Settings(app_env="prod", jwt_alg="RS256", jwks_url="https://idp/jwks",
+                 jwt_issuer="iss", jwt_audience="aud", pii_detector="regex")

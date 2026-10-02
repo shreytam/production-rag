@@ -26,6 +26,8 @@ import functools
 from contextlib import contextmanager
 from typing import Any, Generator, Callable
 
+from pydantic import BaseModel
+
 from core.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -139,8 +141,14 @@ class Tracer:
                     mask=self._mask_data,
                     sample_rate=settings.langfuse_sample_rate,
                 )
-            except Exception:
-                # If Langfuse fails to initialise, degrade silently
+            except Exception as exc:
+                # Degrade to no-op, but say so: tracing was requested. Log the
+                # exception type only — messages may echo connection details/keys.
+                logger.warning(
+                    "Langfuse tracing requested but failed to initialise (%s); "
+                    "tracing disabled for this process",
+                    type(exc).__name__,
+                )
                 self._enabled = False
 
     def _mask_data(self, data: Any) -> Any:
@@ -161,7 +169,13 @@ class Tracer:
             
         if isinstance(data, list):
             return [self._mask_data(item) for item in data]
-            
+
+        if isinstance(data, tuple):
+            return tuple(self._mask_data(item) for item in data)
+
+        if isinstance(data, BaseModel):
+            return self._mask_data(data.model_dump())
+
         return data
 
     # ------------------------------------------------------------------
