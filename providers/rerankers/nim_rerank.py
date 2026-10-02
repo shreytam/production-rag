@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from core.types import ScoredChunk
-
-
-def _is_transient(exc: BaseException) -> bool:
-    return isinstance(exc, (httpx.TimeoutException, httpx.NetworkError))
+from providers.rerankers._common import retry_transient
 
 
 class NIMReranker:
@@ -28,12 +24,7 @@ class NIMReranker:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
 
-    @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
-        stop=stop_after_attempt(2),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
-        reraise=True,
-    )
+    @retry_transient
     def rerank(
         self,
         query: str,

@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # slow-but-valid response is awaited rather than aborted.
     request_timeout_seconds: float = 600.0
     max_retries: int = 5
+    # Query-time clients (embedder, generator, rewriter LLM, judge) must fail fast:
+    # a user is waiting. Ingest-time clients keep the generous values above.
+    query_request_timeout_seconds: float = 30.0
+    query_max_retries: int = 1
 
     # --- Retrieval / assembly knobs ---
     rrf_k: int = 60

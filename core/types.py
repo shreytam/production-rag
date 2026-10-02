@@ -137,6 +137,9 @@ class Query(BaseModel):
     """A retrieval request. `acl` is mandatory — there is no unscoped query path."""
 
     text: str
+    # Text the reranker scores against: the user's ORIGINAL question when `text`
+    # was rewritten for retrieval. None => rerank against `text`.
+    rerank_text: str | None = None
     acl: ACLContext
     top_k: int = 20
     rerank_top_n: int = 8

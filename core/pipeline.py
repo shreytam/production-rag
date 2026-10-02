@@ -20,6 +20,7 @@ from core.registry import (
     build_embedder,
     build_generator,
     build_reranker,
+    for_query_path,
     build_vector_store,
 )
 from core.types import ACLContext, Answer, Query
@@ -38,6 +39,11 @@ DEFAULT_TENANT = "public"
 OUTPUT_BLOCK_MESSAGE = (
     "I can't provide an answer that passes the system's safety and grounding "
     "checks for this request."
+)
+
+
+NO_DOCUMENTS_MESSAGE = (
+    "No relevant documents found for this question, so I can't provide an answer."
 )
 
 
@@ -150,8 +156,22 @@ class RAGPipeline:
             retrieval_question = question
             if self.rewriter is not None:
                 with self.tracer.span("rewrite") as s_rw:
-                    retrieval_question = self.rewriter.rewrite(question, acl)
-                    s_rw.update(output={"rewritten": retrieval_question != question})
+                    rewrite_failed = False
+                    try:
+                        retrieval_question = self.rewriter.rewrite(question, acl)
+                    except Exception:
+                        # Fail-soft: a rewriter fault must never 500 the query.
+                        logger.warning(
+                            "rewriter failed; using original question", exc_info=True
+                        )
+                        retrieval_question = question
+                        rewrite_failed = True
+                    s_rw.update(
+                        output={
+                            "rewritten": retrieval_question != question,
+                            "rewrite_failed": rewrite_failed,
+                        }
+                    )
 
             # --- Semantic cache: answer tier -----------------------------------
             cache_on = self.answer_cache is not None or self.retrieval_cache is not None
@@ -181,6 +201,7 @@ class RAGPipeline:
 
             q = Query(
                 text=retrieval_question,
+                rerank_text=question,
                 acl=acl,
                 top_k=self.settings.retrieve_top_k,
                 rerank_top_n=self.settings.rerank_top_n,
@@ -212,6 +233,7 @@ class RAGPipeline:
                 ret_output: dict[str, Any] = {
                     "n_hits": len(scored),
                     "cache": cache_status,
+                    "reranker_fallback": bool(q.metadata.get("reranker_fallback")),
                     "by_source": {
                         src.value: sum(1 for sc in scored if sc.source == src)
                         for src in set(sc.source for sc in scored)
@@ -240,7 +262,12 @@ class RAGPipeline:
                 as_type="generation",
                 model=self.settings.gen_model,
             ) as s_gen:
-                ans, ms = timed(self.grounded.generate)(question, scored)
+                if scored:
+                    ans, ms = timed(self.grounded.generate)(question, scored)
+                else:
+                    # Nothing retrieved: never ask the LLM to answer from no
+                    # context (hallucination risk, esp. with guardrails off).
+                    ans, ms = Answer(text=NO_DOCUMENTS_MESSAGE, refused=True), 0.0
                 latencies["generation_ms"] = ms
                 s_gen.update(
                     input={"question": question, "n_context_chunks": len(ans.contexts)},
@@ -268,13 +295,22 @@ class RAGPipeline:
                         context={
                             "question": question,
                             "context_chunk_ids": {sc.chunk_id for sc in ans.contexts},
-                            "contexts": [sc.chunk.text for sc in ans.contexts],
+                            # Same text the generator saw (contextual prefix + body).
+                            "contexts": [sc.chunk.embed_text for sc in ans.contexts],
                             # GeneratedAnswer-shaped dict for the SchemaGuardrail.
                             "candidate": ans.metadata.get("structured_output", {}),
                         },
                     )
                     guard_log["output"] = [r.model_dump() for r in out_results]
-                    s_out.update(output={"actions": [r.action.value for r in out_results]})
+                    s_out.update(
+                        output={
+                            "actions": [r.action.value for r in out_results],
+                            "groundedness_unverified": any(
+                                r.metadata.get("groundedness_unverified")
+                                for r in out_results
+                            ),
+                        }
+                    )
                     ans.text = self.guardrails.apply_redactions(ans.text, out_results)
                     
                     # Scrub metadata duplicate structured_output answer if redactions took place
@@ -381,9 +417,12 @@ def build(
     call sites; callers may drop it in a future cleanup.
     """
     s = settings or get_settings()
-    embedder = build_embedder(s)
+    # Everything built here serves queries: bounded timeouts/retries (not the
+    # generous ingest-time ones).
+    qs = for_query_path(s)
+    embedder = build_embedder(qs)
     store = build_vector_store(s)
-    generator = build_generator("gen", s)
+    generator = build_generator("gen", qs)
     grounded = GroundedGenerator(generator, token_budget=s.context_token_budget, settings=s)
 
     if version == "baseline":
@@ -412,7 +451,7 @@ def build(
         from core.registry import build_query_rewriter
         # Build the cheap 'context' generator through the module-level seam so
         # tests that stub build_generator stay offline.
-        rewriter = build_query_rewriter(s, generator=build_generator("context", s))
+        rewriter = build_query_rewriter(s, generator=build_generator("context", qs))
 
     return RAGPipeline(retriever, grounded, s, guardrails=guardrails,
                        embedder=embedder, answer_cache=answer_cache,

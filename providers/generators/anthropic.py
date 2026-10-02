@@ -18,9 +18,18 @@ _TOOL_NAME = "structured_output"
 class AnthropicGenerator:
     """Generator that uses the Anthropic Messages API."""
 
-    def __init__(self, model: str, api_key: str) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: str,
+        *,
+        timeout: float = 60.0,
+        max_retries: int = 2,
+    ) -> None:
         self._model = model
-        self._client = anthropic.Anthropic(api_key=api_key)
+        self._client = anthropic.Anthropic(
+            api_key=api_key, timeout=timeout, max_retries=max_retries
+        )
 
     def complete(
         self,
